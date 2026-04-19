@@ -83,23 +83,6 @@ ppt info <repo-url|short-id>
 This means you can share the same `ppt` config across machines while still
 keeping upgrades explicit.
 
-## Supported Package Sources
-
-For the MVP, `ppt` expects full GitHub repository URLs.
-
-Supported examples:
-
-```text
-https://github.com/neovim/neovim
-https://github.com/sharkdp/bat
-```
-
-Not supported yet:
-- short aliases such as `github:owner/repo`
-- arbitrary download URLs
-- GitLab and other Git hosts
-- source-only repositories without usable release binaries
-
 ## Examples
 
 ```bash
