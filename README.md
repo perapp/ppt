@@ -95,8 +95,8 @@ ppt add https://github.com/myself/neovim --prefix my-
 # install ~/.local/ppt/bin/nvim-0.12.1
 ppt add https://github.com/neovim/neovim --version v0.12.1
 
-# change prefixes so your fork becomes nvim and upstream becomes official-nvim
-ppt prefix https://github.com/neovim/neovim official-
+# change prefixes so your fork becomes nvim and upstream becomes src-nvim
+ppt prefix https://github.com/neovim/neovim src-
 ppt prefix https://github.com/myself/neovim ""
 
 # apply the shared config and locked versions on this machine
