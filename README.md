@@ -32,7 +32,13 @@ across different Linux systems.
 
 ## Install
 
-Planned bootstrap command:
+From a local checkout:
+
+```bash
+./install.sh
+```
+
+Planned hosted bootstrap command:
 
 ```bash
 curl -fsSL https://gitlab.com/xxx/ppt/install.sh | bash
