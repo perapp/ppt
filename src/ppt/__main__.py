@@ -211,7 +211,9 @@ def cmd_sync(args: argparse.Namespace) -> int:
         if lock.get(entry.repo) != target_version:
             lock[entry.repo] = target_version
             changed_lock = True
-        messages.append(install_package(paths, platform_info, entry, target_version, state))
+        message = install_package(paths, platform_info, entry, target_version, state)
+        if message:
+            messages.append(message)
 
     if changed_lock:
         write_lock_file(paths.lock_file, lock)
@@ -246,7 +248,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         if previous != target_version:
             changed_lock = True
             lock[entry.repo] = target_version
-        messages.append(install_package(paths, platform_info, entry, target_version, state))
+        message = install_package(paths, platform_info, entry, target_version, state)
+        if message:
+            messages.append(message)
 
     if changed_lock:
         write_lock_file(paths.lock_file, lock)
@@ -377,7 +381,16 @@ def install_package(
     entry: PackageConfig,
     version: str,
     state: dict,
-) -> str:
+) -> str | None:
+    repo_state = state.get(entry.repo, {})
+    if is_current_install(paths, entry, version, repo_state):
+        return None
+    if can_relink_current_install(paths, entry, version, repo_state):
+        relink_installed_package(paths, entry.repo, entry, repo_state)
+        return f"relinked {display_name(entry.repo)} {version}"
+    if is_current_unavailable(platform_info, version, repo_state):
+        return None
+
     release = fetch_release(entry.repo, version)
     asset = select_asset(entry.repo, release, platform_info)
     if asset is None:
@@ -413,6 +426,68 @@ def install_package(
     }
     write_receipt(package_dir, entry.repo, version, asset, platform_info, bin_links)
     return f"installed {display_name(entry.repo)} {version}"
+
+
+def is_current_install(paths: AppPaths, entry: PackageConfig, version: str, repo_state: dict) -> bool:
+    if repo_state.get("status") != "installed":
+        return False
+    if repo_state.get("installed_version") != version:
+        return False
+    if (repo_state.get("prefix") or "") != (entry.prefix or ""):
+        return False
+
+    package_dir = package_dir_for_state(repo_state)
+    if package_dir is None or not package_dir.exists():
+        return False
+    return bin_links_match(paths, entry, package_dir, repo_state)
+
+
+def can_relink_current_install(paths: AppPaths, entry: PackageConfig, version: str, repo_state: dict) -> bool:
+    if repo_state.get("status") != "installed":
+        return False
+    if repo_state.get("installed_version") != version:
+        return False
+    package_dir = package_dir_for_state(repo_state)
+    if package_dir is None or not package_dir.exists():
+        return False
+    return True
+
+
+def is_current_unavailable(platform_info: PlatformInfo, version: str, repo_state: dict) -> bool:
+    if repo_state.get("status") != "unavailable":
+        return False
+    if repo_state.get("resolved_version") != version:
+        return False
+    return repo_state.get("message") == f"no release asset for {platform_info.key}"
+
+
+def package_dir_for_state(repo_state: dict) -> Path | None:
+    package_dir_raw = repo_state.get("package_dir")
+    if not package_dir_raw:
+        return None
+    return Path(package_dir_raw)
+
+
+def bin_links_match(paths: AppPaths, entry: PackageConfig, package_dir: Path, repo_state: dict) -> bool:
+    expected_links = {
+        str(paths.bin_dir / f"{entry.prefix or ''}{exposed_name}")
+        for exposed_name in expected_binaries(entry.repo)
+    }
+    current_links = set(repo_state.get("bin_links", []))
+    if current_links != expected_links:
+        return False
+
+    for raw_link in expected_links:
+        link_path = Path(raw_link)
+        if not link_path.is_symlink():
+            return False
+        try:
+            target = link_path.resolve(strict=True)
+        except FileNotFoundError:
+            return False
+        if not str(target).startswith(f"{package_dir}{os.sep}"):
+            return False
+    return True
 
 
 def activate_binaries(
