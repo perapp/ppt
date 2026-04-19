@@ -1,0 +1,10 @@
+stages:
+  - test
+
+test:
+  stage: test
+  image: python:3.12-slim
+  script:
+    - python3 -m pip install --upgrade pip
+    - python3 -m pip install uv
+    - uv run pytest

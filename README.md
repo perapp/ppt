@@ -127,6 +127,14 @@ If a package is configured but has no matching release artifact for the current
 platform, `ppt` should warn and continue. `ppt list` should still show that
 package as unavailable on this machine.
 
+## Testing
+
+Run the hermetic CLI test suite locally with `uv`:
+
+```bash
+uv run pytest
+```
+
 ## Notes
 
 `ppt` is intended to complement, not replace, the system package manager. Use
