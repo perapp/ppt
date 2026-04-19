@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import json
+import html
 import inspect
+import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -206,6 +208,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
         if target_version is None:
             release = fetch_release(entry.repo, None)
             target_version = release["tag_name"]
+        if lock.get(entry.repo) != target_version:
             lock[entry.repo] = target_version
             changed_lock = True
         messages.append(install_package(paths, platform_info, entry, target_version, state))
@@ -570,6 +573,10 @@ def replace_symlink(target: Path, link_path: Path) -> None:
 
 
 def fetch_release(repo: str, version: str | None) -> dict:
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if not token:
+        return fetch_release_from_html(repo, version)
+
     owner_repo = owner_repo_name(repo)
     if version:
         url = f"https://api.github.com/repos/{owner_repo}/releases/tags/{urllib.parse.quote(version, safe='')}"
@@ -581,6 +588,8 @@ def fetch_release(repo: str, version: str | None) -> dict:
         with urllib.request.urlopen(request) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
+        if exc.code in (403, 429):
+            return fetch_release_from_html(repo, version)
         if version is None and exc.code == 404:
             raise PptError(f"no release found for {repo}") from exc
         if version is not None and exc.code == 404:
@@ -588,15 +597,94 @@ def fetch_release(repo: str, version: str | None) -> dict:
         raise PptError(f"failed to query releases for {repo}: {exc.reason}") from exc
 
 
+def fetch_release_from_html(repo: str, version: str | None) -> dict:
+    owner_repo = owner_repo_name(repo)
+    tag = version or resolve_latest_tag(owner_repo)
+    html_text = fetch_text(
+        f"https://github.com/{owner_repo}/releases/expanded_assets/{urllib.parse.quote(tag, safe='')}"
+    )
+    assets = []
+    seen = set()
+    for name in parse_asset_names(html_text):
+        if name in seen:
+            continue
+        seen.add(name)
+        assets.append(
+            {
+                "name": name,
+                "browser_download_url": github_download_url(owner_repo, tag, name),
+            }
+        )
+    if version is not None and not assets:
+        tag_page = fetch_text(
+            f"https://github.com/{owner_repo}/releases/tag/{urllib.parse.quote(tag, safe='')}"
+        )
+        assets = [
+            {
+                "name": name,
+                "browser_download_url": github_download_url(owner_repo, tag, name),
+            }
+            for name in parse_asset_names(tag_page)
+        ]
+    if version is not None and not assets:
+        raise PptError(f"release tag {version} not found for {repo}")
+    if not assets and version is None:
+        raise PptError(f"no release found for {repo}")
+    return {"tag_name": tag, "assets": assets}
+
+
+def resolve_latest_tag(owner_repo: str) -> str:
+    url = f"https://github.com/{owner_repo}/releases/latest"
+    request = urllib.request.Request(url, headers=github_web_headers())
+    try:
+        with urllib.request.urlopen(request) as response:
+            final_url = response.geturl()
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise PptError(f"no release found for https://github.com/{owner_repo}") from exc
+        raise PptError(f"failed to query releases for https://github.com/{owner_repo}: {exc.reason}") from exc
+
+    match = re.search(r"/releases/tag/([^/?#]+)", final_url)
+    if not match:
+        raise PptError(f"failed to resolve latest release for https://github.com/{owner_repo}")
+    return urllib.parse.unquote(match.group(1))
+
+
+def fetch_text(url: str) -> str:
+    request = urllib.request.Request(url, headers=github_web_headers())
+    try:
+        with urllib.request.urlopen(request) as response:
+            return response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return ""
+        raise PptError(f"failed to fetch {url}: {exc.reason}") from exc
+
+
+def parse_asset_names(html_text: str) -> list[str]:
+    matches = re.findall(r"([A-Za-z0-9._+-]+(?:\.tar\.gz|\.tgz|\.tar\.xz|\.tbz|\.tar\.bz2))", html_text)
+    return [html.unescape(match) for match in matches]
+
+
+def github_download_url(owner_repo: str, tag: str, name: str) -> str:
+    quoted_tag = urllib.parse.quote(tag, safe="")
+    quoted_name = urllib.parse.quote(name, safe="")
+    return f"https://github.com/{owner_repo}/releases/download/{quoted_tag}/{quoted_name}"
+
+
 def github_headers() -> dict[str, str]:
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": f"ppt/{__version__}",
     }
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+def github_web_headers() -> dict[str, str]:
+    return {"User-Agent": f"ppt/{__version__}"}
 
 
 def select_asset(repo: str, release: dict, platform_info: PlatformInfo) -> dict | None:
