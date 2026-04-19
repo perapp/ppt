@@ -41,7 +41,7 @@ From a local checkout:
 Planned hosted bootstrap command:
 
 ```bash
-curl -fsSL https://gitlab.com/xxx/ppt/install.sh | bash
+curl -fsSL https://gitlab.com/perapp/ppt/-/raw/main/install.sh | bash
 ```
 
 If needed, add `ppt` to your `PATH`:
