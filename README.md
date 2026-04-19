@@ -2,69 +2,104 @@
 
 Personal Package Tool
 
-`ppt` installs CLI tools into your home directory on Linux without root.
+`ppt` installs CLI tools from Git repository releases into your home directory on
+Linux without root.
 
-It is designed for multi-user Linux systems where you want a modern personal
-toolbox — `bat`, `nvim`, `btop`, `rg`, `fd`, and similar tools — without
-depending on the system package manager.
+It is meant for systems where you want a modern personal toolbox such as `bat`,
+`nvim`, `btop`, `rg`, and `fd`, but do not want to depend on the system package
+manager.
 
 `ppt` is especially aimed at:
 - shared Linux servers
 - locked-down enterprise hosts
 - ephemeral VMs and containers
-- mixed distros such as Ubuntu, Debian and RHEL
-- mixed architectures such as x86_64 and arm64
-- providing the very latest version of tools from the project repository
-- installing recent versions of tools directly from project releases
+- mixed distros such as Ubuntu, Debian, Fedora, and RHEL
+- mixed architectures such as `x86_64` and `arm64`
+
+`ppt` is binary-first:
+- you give it a full Git repository URL
+- it inspects the project's releases
+- it selects a Linux asset that matches the current system
+- it installs that release into a user-owned prefix
+- it exposes the installed commands through a personal `bin` directory
+
+If a project does not publish usable Linux release binaries, it is out of scope
+for the first version.
 
 ## Install
+
+Planned bootstrap command:
 
 ```bash
 curl -fsSL https://gitlab.com/xxx/ppt/install.sh | bash
 ```
 
-### Usage
+If needed, add `ppt` to your `PATH`:
 
+```bash
+export PATH="$HOME/.local/ppt/bin:$PATH"
 ```
-# add a new package to be installed on this system
+
+## Usage
+
+```text
+# add a package to the managed set and install it
 ppt add <repo-url> [--version <version>] [--prefix <prefix>]
 
 # remove a package
 ppt remove <repo-url|short-id>
 
+# change the command prefix used for an installed package
+ppt prefix <repo-url|short-id> <prefix>
+
 # refresh remote release metadata
-ppt update   
+ppt update
 
-# install newer versions for already added packages.
-ppt upgrade [repo-url|short-id]  
+# install newer versions for already added packages
+ppt upgrade [repo-url|short-id]
 
-# list all added packages and their installed versions
+# list added packages and installed versions
 ppt list
 ```
 
-Examples:
+## Supported Package Sources
+
+For the MVP, `ppt` expects full GitHub repository URLs.
+
+Supported examples:
+
+```text
+https://github.com/neovim/neovim
+https://github.com/sharkdp/bat
 ```
-# install ~/.local/bin/nvim
+
+Not supported yet:
+- short aliases such as `github:owner/repo`
+- arbitrary download URLs
+- GitLab and other Git hosts
+- source-only repositories without usable release binaries
+
+## Examples
+
+```bash
+# install ~/.local/ppt/bin/nvim
 ppt add https://github.com/neovim/neovim
 
-# install ~/.local/bin/my-nvim
+# install ~/.local/ppt/bin/my-nvim
 ppt add https://github.com/myself/neovim --prefix my-
 
-# install ~/.local/bin/nvim-0.12.1
+# install ~/.local/ppt/bin/nvim-0.12.1
 ppt add https://github.com/neovim/neovim --version v0.12.1
 
-# Change prefixes such that my fork is nvim and the upstream is official-nvim
-ppt prefix https://github.com/neovim/neovim official
+# change prefixes so your fork becomes nvim and upstream becomes official-nvim
+ppt prefix https://github.com/neovim/neovim official-
 ppt prefix https://github.com/myself/neovim ""
 ```
 
-## Architecture
+## Notes
 
- - ~/.local/bin/ppt: installed version of ppt executable
- - ~/.conf/ppt/packages.toml: config for what packages should be on this system. What prefixes are used and which versions are added. A good candidate for dot file manager to share between systems.
- - ~/.local/ppt/state.json: current state of packages. MAybe individual files instead to make parallell install easier?
- - ~/.local/ppt/bin/{x,y} symlinks into directories below for executable binaries for x and y 
- - ~/.local/ppt/packages/{X,Y}/ X and Y represent different immutable downloaded packages. If a package X is being upgraded, it is: downloaded and prepared into Z, relinked to Z and then X is "garbage collected" if not used anymore.
+`ppt` is intended to complement, not replace, the system package manager. Use
+the system package manager for operating system packages, shared libraries, and
+services. Use `ppt` for personal CLI tools installed in your home directory.
 
-Considirations for potential future features:
- - Also support system wide install using /etc/ppt/packages.toml
+Implementation notes and design details live in `docs/design.md`.
