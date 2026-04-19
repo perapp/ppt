@@ -210,10 +210,12 @@ Recommended user-facing commands:
 - `ppt list`: show config, locked version, installed version, and status
 - `ppt info`: explain package details and local status
 - `ppt sync`: make the local machine match `packages.toml` plus `packages.lock.toml`
+- `ppt sync --check`: perform a fast local drift check without fetching releases or changing state
 - `ppt upgrade`: refresh locked versions for unpinned packages, then apply them locally
 
 Recommended behavior split:
 - `sync` does not discover newer versions; it applies the current lock file
+- `sync --check` does not hit the network; if an unpinned package has no lock entry yet, it reports that sync is needed
 - `upgrade` is the explicit command that moves unpinned packages to newer releases
 
 `update` is likely unnecessary for the MVP. Unlike `apt`, `ppt` does not need a

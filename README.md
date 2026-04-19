@@ -131,6 +131,11 @@ ppt upgrade
 `packages.lock.toml`. This is the command to run after pulling updated dotfiles
 onto another machine.
 
+`ppt sync --check` performs a local-only drift check, prints nothing when the
+system is already in sync, and exits with `10` when a sync is needed. In the
+out-of-sync case it prints a short message telling you to run `ppt sync`. This
+is intended for shell startup hooks or prompt scripts.
+
 `ppt upgrade` updates the locked versions for unpinned packages and installs
 those new versions on the current machine. This keeps upgrades explicit, which
 is useful when tool config or plugins may break across releases.

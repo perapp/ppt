@@ -114,6 +114,16 @@ def build_parser() -> argparse.ArgumentParser:
     prefix_parser.set_defaults(handler=cmd_prefix)
 
     sync_parser = subparsers.add_parser("sync", help="Apply config and lock state")
+    sync_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Check whether local state differs from config/lock state without changing anything",
+    )
+    sync_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress normal output for --check",
+    )
     sync_parser.set_defaults(handler=cmd_sync)
 
     upgrade_parser = subparsers.add_parser("upgrade", help="Upgrade unpinned packages")
@@ -191,10 +201,22 @@ def cmd_prefix(args: argparse.Namespace) -> int:
 
 def cmd_sync(args: argparse.Namespace) -> int:
     paths = ensure_layout()
-    platform_info = detect_platform()
     config = read_package_file(paths.config_file)
     lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
+
+    if args.check:
+        platform_info = detect_platform()
+        reasons = sync_needed_reasons(paths, config, lock, state, platform_info)
+        if reasons:
+            if not args.quiet:
+                count = len(reasons)
+                noun = "package" if count == 1 else "packages"
+                print(f"{count} {noun} out of sync; run `ppt sync`")
+            return 10
+        return 0
+
+    platform_info = detect_platform()
 
     configured_repos = {entry.repo for entry in config}
     for repo in list(state):
@@ -221,6 +243,62 @@ def cmd_sync(args: argparse.Namespace) -> int:
     for message in messages:
         print(message)
     return 0
+
+
+def sync_needed_reasons(
+    paths: AppPaths,
+    config: list[PackageConfig],
+    lock: dict[str, str],
+    state: dict,
+    platform_info: PlatformInfo,
+) -> list[str]:
+    reasons: list[str] = []
+    configured_repos = {entry.repo for entry in config}
+
+    for repo in sorted(state):
+        if repo not in configured_repos:
+            reasons.append(f"remove unmanaged package {repo}")
+
+    for entry in config:
+        target_version = entry.version or lock.get(entry.repo)
+        if target_version is None:
+            reasons.append(f"missing lock entry for {entry.repo}")
+            continue
+
+        repo_state = state.get(entry.repo, {})
+        if is_current_install(paths, entry, target_version, repo_state):
+            continue
+        if is_current_unavailable(platform_info, target_version, repo_state):
+            continue
+
+        if repo_state.get("status") == "installed":
+            installed_version = repo_state.get("installed_version")
+            if installed_version != target_version:
+                reasons.append(
+                    f"{entry.repo} installed {installed_version or '-'} but wants {target_version}"
+                )
+            elif (repo_state.get("prefix") or "") != (entry.prefix or ""):
+                reasons.append(f"{entry.repo} prefix differs from config")
+            else:
+                reasons.append(f"{entry.repo} local links or files are missing")
+            continue
+
+        if repo_state.get("status") == "unavailable":
+            resolved_version = repo_state.get("resolved_version")
+            message = repo_state.get("message", "")
+            if resolved_version != target_version:
+                reasons.append(
+                    f"{entry.repo} unavailable state is for {resolved_version or '-'} not {target_version}"
+                )
+            elif message != f"no release asset for {platform_info.key}":
+                reasons.append(f"{entry.repo} availability state is stale for this platform")
+            else:
+                reasons.append(f"{entry.repo} needs reinstall")
+            continue
+
+        reasons.append(f"{entry.repo} is not installed")
+
+    return reasons
 
 
 def cmd_upgrade(args: argparse.Namespace) -> int:
