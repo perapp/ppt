@@ -26,6 +26,10 @@ manager.
 If a project does not publish usable Linux release binaries, it is out of scope
 for the first version.
 
+`ppt` is also intended to work well with version-controlled dotfiles. You should
+be able to keep `ppt` config in `yadm` or another dotfile manager and share it
+across different Linux systems.
+
 ## Install
 
 Planned bootstrap command:
@@ -52,15 +56,34 @@ ppt remove <repo-url|short-id>
 # change the command prefix used for an installed package
 ppt prefix <repo-url|short-id> <prefix>
 
-# refresh remote release metadata
-ppt update
+# make this machine match the shared config and lock file
+ppt sync
 
-# install newer versions for already added packages
+# bump locked versions for unpinned packages and install them locally
 ppt upgrade [repo-url|short-id]
 
-# list added packages and installed versions
+# list configured packages and current status
 ppt list
+
+# show details for one package
+ppt info <repo-url|short-id>
 ```
+
+## Config Files
+
+`ppt` keeps its shared configuration in `~/.config/ppt/`.
+
+```text
+~/.config/ppt/
+  packages.toml
+  packages.lock.toml
+```
+
+- `packages.toml` is the desired package set that you can keep under version control
+- `packages.lock.toml` records the resolved versions that unpinned packages should use
+
+This means you can share the same `ppt` config across machines while still
+keeping upgrades explicit.
 
 ## Supported Package Sources
 
@@ -94,7 +117,29 @@ ppt add https://github.com/neovim/neovim --version v0.12.1
 # change prefixes so your fork becomes nvim and upstream becomes official-nvim
 ppt prefix https://github.com/neovim/neovim official-
 ppt prefix https://github.com/myself/neovim ""
+
+# apply the shared config and locked versions on this machine
+ppt sync
+
+# explicitly bump unpinned packages to newer releases
+ppt upgrade
 ```
+
+## Command Model
+
+`ppt add` records a package in config and installs it immediately when possible.
+
+`ppt sync` makes the current machine match `packages.toml` and
+`packages.lock.toml`. This is the command to run after pulling updated dotfiles
+onto another machine.
+
+`ppt upgrade` updates the locked versions for unpinned packages and installs
+those new versions on the current machine. This keeps upgrades explicit, which
+is useful when tool config or plugins may break across releases.
+
+If a package is configured but has no matching release artifact for the current
+platform, `ppt` should warn and continue. `ppt list` should still show that
+package as unavailable on this machine.
 
 ## Notes
 

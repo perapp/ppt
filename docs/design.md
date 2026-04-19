@@ -35,8 +35,8 @@ https://github.com/neovim/neovim
 Current assumptions:
 - `ppt add <repo-url>` adds the package to the managed set and installs it
 - `ppt remove <repo-url|short-id>` removes it from the managed set
-- `ppt update` refreshes remote release metadata
-- `ppt upgrade` installs newer matching releases for managed packages
+- `ppt sync` makes the current machine match config and lock state
+- `ppt upgrade` bumps resolved versions for unpinned packages and installs them locally
 - `ppt prefix` changes the exposed command prefix for an installed package
 
 The choice of `add` rather than `install` is deliberate: `ppt` manages a
@@ -49,10 +49,57 @@ across machines, for example with `yadm`.
 
 That implies:
 - `~/.config/ppt/packages.toml` should be the source of truth for desired packages
+- `~/.config/ppt/packages.lock.toml` should record the resolved versions to use for unpinned packages
 - the config may contain packages that are not installable on every machine
 - differing CPU architecture or upstream release availability should not make a shared config unusable
 
 This is a core product property, not an edge case.
+
+## Config And Lock Model
+
+Recommended shared files:
+
+```text
+~/.config/ppt/
+  packages.toml
+  packages.lock.toml
+```
+
+Recommended meaning:
+- `packages.toml`: desired packages, optional explicit version pins, optional prefix overrides
+- `packages.lock.toml`: resolved versions for packages that are not explicitly pinned
+
+Example intent:
+
+```toml
+[[package]]
+repo = "https://github.com/neovim/neovim"
+
+[[package]]
+repo = "https://github.com/sharkdp/bat"
+version = "v0.25.0"
+```
+
+Example lock state:
+
+```toml
+[[package]]
+repo = "https://github.com/neovim/neovim"
+version = "v0.12.1"
+
+[[package]]
+repo = "https://github.com/sharkdp/bat"
+version = "v0.25.0"
+```
+
+This separates:
+- desired package set
+- chosen tool versions
+- local installation state on one machine
+
+That separation is useful when editor plugins or user config may break across
+upstream releases. `upgrade` becomes an explicit choice rather than an implicit
+side effect of `sync`.
 
 ## MVP Package Coverage
 
@@ -112,9 +159,9 @@ Examples:
 - a package that has `x86_64` binaries but no `arm64` binaries
 
 Recommended command behavior:
-- `ppt add <repo-url>`: add the package to config even if it is unavailable on the current machine, but print a warning
+- `ppt add <repo-url>`: add the package to config, resolve or record its locked version, and install it if possible; if unavailable on the current machine, keep it in config but print a warning
 - `ppt sync`: skip unavailable packages with a warning and continue with the rest
-- `ppt upgrade`: do not fail the overall command for unavailable packages; warn and continue
+- `ppt upgrade`: update locked versions for unpinned packages; do not fail the overall command for unavailable packages, warn and continue
 - `ppt list`: show configured packages even when unavailable locally, with an explicit status
 - `ppt info`: explain why the package is unavailable on the current platform
 
@@ -140,9 +187,12 @@ warning-level condition.
 When adding a package, the intended flow is:
 
 1. resolve the repository
-2. find the latest release, or the requested version
+2. determine the target version:
+   - explicit pinned version from `packages.toml`, or
+   - existing locked version, or
+   - latest release if creating a new lock entry
 3. detect the current Linux platform details
-4. locate a matching release artifact
+4. locate a matching release artifact for that version
 5. download and unpack into a versioned package directory
 6. expose selected binaries in the active `bin` directory
 
@@ -151,6 +201,24 @@ The model should stay transparent and easy to debug.
 If the package is valid but no matching artifact exists for the current
 platform, `ppt` should still be able to record it in the managed set and report
 that it is unavailable on this machine.
+
+## Command Semantics
+
+Recommended user-facing commands:
+- `ppt add`: add a package to `packages.toml`, update lock state, and install locally when possible
+- `ppt remove`: remove a package from config and uninstall it locally
+- `ppt list`: show config, locked version, installed version, and status
+- `ppt info`: explain package details and local status
+- `ppt sync`: make the local machine match `packages.toml` plus `packages.lock.toml`
+- `ppt upgrade`: refresh locked versions for unpinned packages, then apply them locally
+
+Recommended behavior split:
+- `sync` does not discover newer versions; it applies the current lock file
+- `upgrade` is the explicit command that moves unpinned packages to newer releases
+
+`update` is likely unnecessary for the MVP. Unlike `apt`, `ppt` does not need a
+separate user-visible command just to refresh package indexes. `sync` and
+`upgrade` can fetch the metadata they need internally.
 
 ## Platform Matching
 
@@ -178,6 +246,7 @@ Current working layout:
   state.json
 ~/.config/ppt/
   packages.toml
+  packages.lock.toml
 ```
 
 Intended meanings:
@@ -186,6 +255,7 @@ Intended meanings:
 - `~/.local/ppt/cache/` contains downloaded release artifacts
 - `~/.local/ppt/state.json` tracks current local installation state
 - `~/.config/ppt/packages.toml` describes the packages that should be managed
+- `~/.config/ppt/packages.lock.toml` records the resolved versions used by unpinned packages
 
 Packages should be installed into immutable versioned directories. Upgrades can
 install a new version beside the old one, then atomically switch the active
@@ -199,10 +269,49 @@ Planned bootstrap command:
 curl -fsSL https://gitlab.com/xxx/ppt/install.sh | bash
 ```
 
-Prototype assumption:
-- the first implementation may install `ppt` into a virtual environment under
-  the `ppt` home directory
-- later this can be replaced by a standalone binary bootstrap
+The first implementation should be a self-contained Python application installed
+without relying on PyPI.
+
+Preferred bootstrap layout:
+
+```text
+~/.local/ppt/
+  bin/
+  app/
+  venv/
+  cache/
+  state.json
+~/.config/ppt/
+  packages.toml
+  packages.lock.toml
+```
+
+Bootstrap behavior for the Python version:
+- create `~/.local/ppt/venv`
+- install the Python application under `~/.local/ppt/app/`
+- create a launcher in `~/.local/ppt/bin/ppt`
+- avoid any dependency on PyPI packaging or global Python installation state beyond having a usable Python interpreter
+
+`app/` is preferred over `src/` because this is installed application code, not
+necessarily a developer checkout.
+
+## Python First, Rust Later
+
+The first version should be implemented in Python for speed of iteration.
+
+However, the long-term expectation is that `ppt` may be replaced by a Rust
+implementation while preserving the same overall user model.
+
+That suggests a few design constraints even in the Python version:
+- keep config and package state format independent of the implementation language
+- keep the on-disk package layout stable across implementations
+- keep the launcher and install model simple enough that a future Rust binary can replace the Python entrypoint
+- avoid PyPI-specific concepts becoming part of the product identity
+
+Desired migration shape:
+- Python version: `install.sh` installs app code plus venv and exposes `ppt`
+- Rust version: `install.sh` can later install a standalone binary into the same prefix
+- user config and installed packages remain compatible where practical
 
 ## Future Ideas
 
