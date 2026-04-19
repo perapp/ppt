@@ -32,14 +32,6 @@ across different Linux systems.
 
 ## Install
 
-From a local checkout:
-
-```bash
-./install.sh
-```
-
-Planned hosted bootstrap command:
-
 ```bash
 curl -fsSL https://gitlab.com/perapp/ppt/-/raw/main/install.sh | bash
 ```
