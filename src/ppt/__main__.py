@@ -665,10 +665,12 @@ def download_asset(cache_dir: Path, asset: dict) -> Path:
     if target.exists() and target.stat().st_size > 0:
         return target
 
-    request = urllib.request.Request(
-        asset["browser_download_url"],
-        headers={"User-Agent": f"ppt/{__version__}"},
-    )
+    url = asset["browser_download_url"]
+    headers = {"User-Agent": f"ppt/{__version__}"}
+    parsed = urllib.parse.urlparse(url)
+    if parsed.netloc != "github.com" and gitlab_token():
+        headers.update(gitlab_headers())
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request) as response, target.open("wb") as handle:
             shutil.copyfileobj(response, handle)
@@ -770,6 +772,15 @@ def replace_symlink(target: Path, link_path: Path) -> None:
 
 
 def fetch_release(repo: str, version: str | None) -> dict:
+    host = urllib.parse.urlparse(repo).netloc
+    if host == "github.com":
+        return fetch_release_github(repo, version)
+    # Default to GitLab semantics for non-GitHub hosts (supports gitlab.com and
+    # self-hosted GitLab instances).
+    return fetch_release_gitlab(repo, version)
+
+
+def fetch_release_github(repo: str, version: str | None) -> dict:
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if not token:
         return fetch_release_from_html(repo, version)
@@ -792,6 +803,39 @@ def fetch_release(repo: str, version: str | None) -> dict:
         if version is not None and exc.code == 404:
             raise PptError(f"release tag {version} not found for {repo}") from exc
         raise PptError(f"failed to query releases for {repo}: {exc.reason}") from exc
+
+
+def fetch_release_gitlab(repo: str, version: str | None) -> dict:
+    parsed = urllib.parse.urlparse(repo)
+    project_path = owner_repo_name(repo)
+    project_id = urllib.parse.quote(project_path, safe="")
+    api_base = f"{parsed.scheme}://{parsed.netloc}/api/v4"
+
+    if version:
+        url = f"{api_base}/projects/{project_id}/releases/{urllib.parse.quote(version, safe='')}"
+    else:
+        url = f"{api_base}/projects/{project_id}/releases/permalink/latest"
+
+    request = urllib.request.Request(url, headers=gitlab_headers())
+    try:
+        with urllib.request.urlopen(request) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404 and version is None:
+            raise PptError(f"no release found for {repo}") from exc
+        if exc.code == 404 and version is not None:
+            raise PptError(f"release tag {version} not found for {repo}") from exc
+        raise PptError(f"failed to query releases for {repo}: {exc.reason}") from exc
+
+    assets: list[dict] = []
+    for link in (payload.get("assets") or {}).get("links") or []:
+        name = link.get("name")
+        url = link.get("direct_asset_url") or link.get("url")
+        if not name or not url:
+            continue
+        assets.append({"name": name, "browser_download_url": url})
+    tag_name = payload.get("tag_name") or payload.get("tag") or version
+    return {"tag_name": tag_name, "assets": assets}
 
 
 def fetch_release_from_html(repo: str, version: str | None) -> dict:
@@ -884,6 +928,19 @@ def github_web_headers() -> dict[str, str]:
     return {"User-Agent": f"ppt/{__version__}"}
 
 
+def gitlab_token() -> str | None:
+    return os.environ.get("GITLAB_TOKEN") or os.environ.get("GL_TOKEN")
+
+
+def gitlab_headers() -> dict[str, str]:
+    headers = {"User-Agent": f"ppt/{__version__}"}
+    token = gitlab_token()
+    if token:
+        # GitLab accepts this for both API calls and authenticated downloads.
+        headers["PRIVATE-TOKEN"] = token
+    return headers
+
+
 def select_asset(repo: str, release: dict, platform_info: PlatformInfo) -> dict | None:
     assets = release.get("assets") or []
     scored: list[tuple[int, dict]] = []
@@ -905,15 +962,19 @@ def score_asset(name: str, platform_info: PlatformInfo) -> int | None:
     if "linux" not in lowered:
         return None
 
-    aliases = SUPPORTED_ARCHES[platform_info.arch]
-    if not any(alias in lowered for alias in aliases):
-        return None
-
+    # Prefer arch-specific assets when present, but allow arch-agnostic assets
+    # (no arch tokens) as a fallback.
+    target_aliases = SUPPORTED_ARCHES[platform_info.arch]
+    contains_target_arch = any(alias in lowered for alias in target_aliases)
+    contains_other_arch = False
+    contains_any_arch = False
     for arch, arch_aliases in SUPPORTED_ARCHES.items():
-        if arch == platform_info.arch:
-            continue
         if any(alias in lowered for alias in arch_aliases):
-            return None
+            contains_any_arch = True
+            if arch != platform_info.arch:
+                contains_other_arch = True
+    if contains_other_arch and not contains_target_arch:
+        return None
 
     score = 100
     score += 10 if "linux" in lowered else 0
@@ -921,6 +982,12 @@ def score_asset(name: str, platform_info: PlatformInfo) -> int | None:
     score += 18 if lowered.endswith(".tgz") else 0
     score += 16 if lowered.endswith(".tar.xz") else 0
     score += 14 if lowered.endswith(".tbz") or lowered.endswith(".tar.bz2") else 0
+
+    if contains_target_arch:
+        score += 25
+    elif not contains_any_arch:
+        # Arch-agnostic: still acceptable, but worse than a correct arch match.
+        score -= 40
 
     contains_musl = "musl" in lowered
     contains_glibc = "glibc" in lowered or "gnu" in lowered
@@ -952,17 +1019,23 @@ def normalize_repo_url(raw: str) -> str:
     text = raw.strip()
     parsed = urllib.parse.urlparse(text)
     if parsed.scheme not in ("http", "https"):
-        raise PptError("MVP only supports full https://github.com/... repository URLs")
-    if parsed.netloc != "github.com":
-        raise PptError("MVP only supports github.com repositories")
+        raise PptError("only full https://... repository URLs are supported")
+    if not parsed.netloc:
+        raise PptError(f"invalid repository URL: {raw}")
     parts = [part for part in parsed.path.split("/") if part]
     if len(parts) < 2:
-        raise PptError(f"invalid GitHub repository URL: {raw}")
-    owner, repo = parts[0], parts[1]
-    if repo.endswith(".git"):
-        repo = repo[:-4]
-    normalized = f"https://github.com/{owner}/{repo}"
-    return normalized
+        raise PptError(f"invalid repository URL: {raw}")
+
+    # Drop UI/action suffixes if the user pasted a non-repo page URL.
+    if "-" in parts:
+        dash = parts.index("-")
+        parts = parts[:dash]
+    if len(parts) < 2:
+        raise PptError(f"invalid repository URL: {raw}")
+
+    if parts[-1].endswith(".git"):
+        parts[-1] = parts[-1][:-4]
+    return f"https://{parsed.netloc}/" + "/".join(parts)
 
 
 def owner_repo_name(repo: str) -> str:
@@ -970,7 +1043,8 @@ def owner_repo_name(repo: str) -> str:
     parts = [part for part in parsed.path.split("/") if part]
     if len(parts) < 2:
         raise PptError(f"invalid repository URL: {repo}")
-    return f"{parts[0]}/{parts[1]}"
+    # GitLab can have nested groups, so keep full path.
+    return "/".join(parts)
 
 
 def package_slug(repo: str) -> str:
@@ -978,7 +1052,7 @@ def package_slug(repo: str) -> str:
 
 
 def display_name(repo: str) -> str:
-    return owner_repo_name(repo).split("/", 1)[1]
+    return owner_repo_name(repo).split("/")[-1]
 
 
 def resolve_package_ref(raw: str, config: list[PackageConfig]) -> str:
@@ -991,7 +1065,7 @@ def resolve_package_ref(raw: str, config: list[PackageConfig]) -> str:
     matches = []
     for entry in config:
         owner_repo = owner_repo_name(entry.repo)
-        short_name = owner_repo.split("/", 1)[1]
+        short_name = owner_repo.split("/")[-1]
         if raw in (short_name, owner_repo):
             matches.append(entry.repo)
     if not matches:
