@@ -28,20 +28,6 @@ SUPPORTED_ARCHES = {
     "armv7": ["armv7l", "armv7", "arm"],
 }
 
-PACKAGE_BINS = {
-    "eza-community/eza": {"eza": ["eza"]},
-    "sharkdp/bat": {"bat": ["bat"]},
-    "junegunn/fzf": {"fzf": ["fzf"]},
-    "BurntSushi/ripgrep": {"rg": ["rg"]},
-    "ClementTsang/bottom": {"btm": ["btm"]},
-    "aristocratos/btop": {"btop": ["btop"]},
-    "dandavison/delta": {"delta": ["delta"]},
-    "dundee/gdu": {"gdu": ["gdu", "gdu_linux_"]},
-    "astral-sh/uv": {"uv": ["uv"]},
-    "helix-editor/helix": {"hx": ["hx"]},
-    "neovim/neovim": {"nvim": ["nvim"]},
-}
-
 SUPPORTED_ARCHIVES = (".tar.gz", ".tgz", ".tar.xz", ".tbz", ".tar.bz2")
 
 
@@ -347,17 +333,39 @@ def cmd_list(args: argparse.Namespace) -> int:
         print("no packages configured")
         return 0
 
-    print("PACKAGE\tWANTED\tLOCKED\tINSTALLED\tSTATUS\tPREFIX")
-    for entry in sorted(config, key=lambda item: display_name(item.repo)):
+    headers = ["PACKAGE", "WANTED", "LOCKED", "INSTALLED", "STATUS", "PREFIX"]
+    rows: list[list[str]] = []
+    for entry in sorted(config, key=lambda item: owner_repo_name(item.repo)):
         repo_state = state.get(entry.repo, {})
-        wanted = entry.version or "latest"
-        locked = lock.get(entry.repo, "-")
-        installed = repo_state.get("installed_version", "-")
-        status = repo_state.get("status", "configured")
-        prefix = entry.prefix if entry.prefix is not None else ""
-        print(
-            f"{display_name(entry.repo)}\t{wanted}\t{locked}\t{installed}\t{status}\t{prefix}"
+        rows.append(
+            [
+                owner_repo_name(entry.repo),
+                entry.version or "latest",
+                lock.get(entry.repo, "-"),
+                repo_state.get("installed_version", "-"),
+                repo_state.get("status", "configured"),
+                entry.prefix if entry.prefix is not None else "",
+            ]
         )
+
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for idx, value in enumerate(row):
+            widths[idx] = max(widths[idx], len(value))
+
+    def format_row(values: list[str]) -> str:
+        # Use spaces rather than tabs so this renders consistently.
+        parts = []
+        for idx, value in enumerate(values):
+            if idx == len(values) - 1:
+                parts.append(value)
+            else:
+                parts.append(value.ljust(widths[idx]))
+        return "  ".join(parts)
+
+    print(format_row(headers))
+    for row in rows:
+        print(format_row(row))
     return 0
 
 
@@ -488,9 +496,14 @@ def install_package(
         shutil.rmtree(package_dir)
     package_dir.mkdir(parents=True, exist_ok=True)
 
-    archive_path = download_asset(paths.cache_dir, asset)
-    extract_archive(archive_path, package_dir)
-    bin_links = activate_binaries(paths, entry, version, package_dir, state)
+    try:
+        archive_path = download_asset(paths.cache_dir, asset)
+        extract_archive(archive_path, package_dir)
+        bin_links = activate_binaries(paths, entry, version, package_dir, state)
+    except Exception:
+        if package_dir.exists():
+            shutil.rmtree(package_dir)
+        raise
     state[entry.repo] = {
         "status": "installed",
         "resolved_version": version,
@@ -547,10 +560,8 @@ def package_dir_for_state(repo_state: dict) -> Path | None:
 
 
 def bin_links_match(paths: AppPaths, entry: PackageConfig, package_dir: Path, repo_state: dict) -> bool:
-    expected_links = {
-        str(paths.bin_dir / f"{entry.prefix or ''}{exposed_name}")
-        for exposed_name in expected_binaries(entry.repo)
-    }
+    expected_bins = discover_binaries_to_link(package_dir)
+    expected_links = {str(paths.bin_dir / f"{entry.prefix or ''}{name}") for name in expected_bins}
     current_links = set(repo_state.get("bin_links", []))
     if current_links != expected_links:
         return False
@@ -579,11 +590,11 @@ def activate_binaries(
     previous = state.get(repo, {})
     remove_bin_links(paths, previous.get("bin_links", []))
 
-    expected_bins = expected_binaries(repo)
+    expected_bins = discover_binaries_to_link(package_dir)
     links: list[str] = []
-    for exposed_name, candidates in expected_bins.items():
-        source = find_binary(package_dir, candidates)
-        link_name = f"{entry.prefix or ''}{exposed_name}"
+    for name in expected_bins:
+        source = find_binary(package_dir, [name])
+        link_name = f"{entry.prefix or ''}{name}"
         link_path = paths.bin_dir / link_name
         replace_symlink(source, link_path)
         links.append(str(link_path))
@@ -680,12 +691,45 @@ def extract_archive(archive_path: Path, destination: Path) -> None:
             shutil.move(str(child), destination / child.name)
 
 
-def expected_binaries(repo: str) -> dict[str, list[str]]:
-    owner_repo = owner_repo_name(repo)
-    binaries = PACKAGE_BINS.get(owner_repo)
-    if binaries is None:
-        raise PptError(f"unsupported MVP package: {owner_repo}")
-    return binaries
+def discover_binaries_to_link(package_dir: Path) -> list[str]:
+    """Discover executable files to expose from an extracted release archive.
+
+    `ppt` intentionally does not carry per-package knowledge. We instead apply a
+    small set of generic heuristics:
+    - Prefer executables in a `bin/` directory (common release layout)
+    - Otherwise prefer executables at the archive root
+    - Otherwise fall back to any executable file in the tree
+
+    The returned list contains binary names (filenames) to link.
+    """
+
+    preferred: set[str] = set()
+    fallback: set[str] = set()
+
+    for path in package_dir.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        if not os.access(path, os.X_OK):
+            continue
+
+        name = path.name
+        lowered = name.lower()
+        if lowered.endswith((".so", ".a", ".o")):
+            continue
+        if lowered.endswith((".txt", ".md", ".rst", ".json", ".toml", ".yaml", ".yml")):
+            continue
+
+        posix = path.as_posix()
+        if "/bin/" in posix or path.parent == package_dir:
+            preferred.add(name)
+        fallback.add(name)
+
+    result = sorted(preferred or fallback)
+    if not result:
+        raise PptError(
+            f"no executable files found in {package_dir}; this release may not contain Linux binaries"
+        )
+    return result
 
 
 def find_binary(package_dir: Path, candidates: list[str]) -> Path:
@@ -953,7 +997,11 @@ def resolve_package_ref(raw: str, config: list[PackageConfig]) -> str:
     if not matches:
         raise PptError(f"package not configured: {raw}")
     if len(matches) > 1:
-        raise PptError(f"package reference is ambiguous: {raw}")
+        options = ", ".join(owner_repo_name(repo) for repo in matches)
+        raise PptError(
+            f"package reference is ambiguous: {raw} (matches: {options}). "
+            f"Use full repo URL or owner/repo (e.g. `ppt remove {owner_repo_name(matches[0])}`)."
+        )
     return matches[0]
 
 

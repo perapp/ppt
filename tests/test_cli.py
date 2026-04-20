@@ -21,9 +21,16 @@ class FakeReleaseStore:
         self.latest: dict[str, str] = {}
         self.archives: dict[tuple[str, str], Path] = {}
 
-    def add_release(self, repo: str, version: str, binaries: dict[str, str]) -> None:
+    def add_release(
+        self,
+        repo: str,
+        version: str,
+        binaries: dict[str, str],
+        *,
+        asset_name: str | None = None,
+    ) -> None:
         slug = repo.split("/")[-1]
-        archive_name = f"{slug}-{version}-linux-x86_64.tar.gz"
+        archive_name = asset_name or f"{slug}-{version}-linux-x86_64.tar.gz"
         archive_path = self.root / archive_name
         create_archive(archive_path, slug, binaries)
         self.archives[(repo, version)] = archive_path
@@ -182,6 +189,67 @@ class TestCliFlows(CliTestCase):
         self.assertFalse((self.home / "packages" / "neovim--neovim").exists())
         self.assertEqual((self.config / "packages.toml").read_text(), "# Managed by ppt\n")
         self.assertEqual((self.config / "packages.lock.toml").read_text(), "# Managed by ppt\n")
+
+    def test_add_installs_zellij(self) -> None:
+        repo = "https://github.com/zellij-org/zellij"
+        self.releases.add_release(
+            repo,
+            "v0.44.1",
+            {"zellij": "#!/bin/sh\necho zellij\n"},
+            asset_name="zellij-no-web-x86_64-unknown-linux-musl.tar.gz",
+        )
+
+        code, stdout, stderr = self.run_ppt("add", repo)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("installed zellij v0.44.1", stdout)
+        self.assertTrue((self.home / "bin" / "zellij").is_symlink())
+
+
+class TestPackageRefResolution(CliTestCase):
+    def test_remove_ambiguous_short_name_suggests_owner_repo(self) -> None:
+        (self.config / "packages.toml").write_text(
+            '# Managed by ppt\n\n[[package]]\nrepo = "https://github.com/perapp/bat"\n\n[[package]]\nrepo = "https://github.com/sharkdp/bat"\n',
+            encoding="utf-8",
+        )
+
+        code, stdout, stderr = self.run_ppt("remove", "bat")
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("package reference is ambiguous: bat", stderr)
+        self.assertIn("perapp/bat", stderr)
+        self.assertIn("sharkdp/bat", stderr)
+        self.assertIn("ppt remove", stderr)
+
+    def test_remove_owner_repo_disambiguates(self) -> None:
+        (self.config / "packages.toml").write_text(
+            '# Managed by ppt\n\n[[package]]\nrepo = "https://github.com/perapp/bat"\n\n[[package]]\nrepo = "https://github.com/sharkdp/bat"\n',
+            encoding="utf-8",
+        )
+
+        code, stdout, stderr = self.run_ppt("remove", "perapp/bat")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("removed https://github.com/perapp/bat", stdout)
+        config_text = (self.config / "packages.toml").read_text(encoding="utf-8")
+        self.assertIn("https://github.com/sharkdp/bat", config_text)
+        self.assertNotIn("https://github.com/perapp/bat", config_text)
+
+
+class TestUnlistedPackages(CliTestCase):
+    def test_add_installs_unlisted_repo_by_auto_discovering_executables(self) -> None:
+        repo = "https://github.com/example/hello"
+        self.releases.add_release(repo, "v1.0.0", {"hello": "#!/bin/sh\necho hello\n"})
+
+        code, stdout, stderr = self.run_ppt("add", repo)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("installed hello v1.0.0", stdout)
+        self.assertTrue((self.home / "bin" / "hello").is_symlink())
 
 
 if __name__ == "__main__":
