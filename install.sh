@@ -2,7 +2,14 @@
 
 set -euo pipefail
 
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_PATH=${BASH_SOURCE[0]:-$0}
+# When invoked via `curl ... | bash`, the script does not exist as a file on disk.
+# In that case, never assume the current working directory is a ppt checkout.
+if [ -f "$SCRIPT_PATH" ]; then
+  ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)
+else
+  ROOT_DIR=""
+fi
 PPT_HOME=${PPT_HOME:-$HOME/.local/ppt}
 PPT_CONFIG_DIR=${PPT_CONFIG_DIR:-$HOME/.config/ppt}
 APP_DIR="$PPT_HOME/app/current"
@@ -24,7 +31,7 @@ fi
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR"
 
-if [ -d "$ROOT_DIR/src" ]; then
+if [ -n "$ROOT_DIR" ] && [ -f "$ROOT_DIR/install.sh" ] && [ -f "$ROOT_DIR/src/ppt/__main__.py" ]; then
   cp -R "$ROOT_DIR/src" "$APP_DIR/src"
 else
   if ! command -v curl >/dev/null 2>&1; then
