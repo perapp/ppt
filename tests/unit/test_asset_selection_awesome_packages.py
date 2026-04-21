@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# This file mirrors the author's current `./ppt list` package set.
+# Most entries come from curated/"awesome" style lists.
+
 from ppt import __main__ as ppt_main
 
 
