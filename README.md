@@ -1,5 +1,9 @@
 # ppt
 
+<p align="center">
+  <img src="docs/assets/ppt_logo_small.png" alt="ppt logo" width="240" />
+</p>
+
 Personal Package Tool
 
 `ppt` installs CLI tools from Git repository releases into your home directory on
@@ -139,4 +143,3 @@ services. Use `ppt` for personal CLI tools installed in your home directory.
 ## Forking and development
 
 For information how to contribute or fork this project, see [CONTRIBUTING.md](CONTRIBUTING.md).
-
