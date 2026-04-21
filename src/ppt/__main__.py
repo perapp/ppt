@@ -33,6 +33,25 @@ SUPPORTED_ARCHES = {
 SUPPORTED_ARCHIVES = (".tar.gz", ".tgz", ".tar.xz", ".tbz", ".tar.bz2", ".zip")
 
 
+# Arch tokens seen in upstream release assets that we do not support.
+#
+# Without this, an asset like "tool-linux-s390x.tar.gz" would look "arch-agnostic"
+# to our limited alias list and could incorrectly be selected as a fallback.
+UNSUPPORTED_ARCH_TOKENS = (
+    "s390x",
+    "ppc64le",
+    "ppc64",
+    "riscv64",
+    "loongarch64",
+    "mips64",
+    "mips",
+    "sparc64",
+    "sparc",
+    "i686",
+    "i386",
+)
+
+
 class PptError(Exception):
     pass
 
@@ -1480,6 +1499,11 @@ def score_asset(name: str, platform_info: PlatformInfo) -> int | None:
             contains_any_arch = True
             if arch != platform_info.arch:
                 contains_other_arch = True
+
+    # Reject other-arch assets that use an arch token we don't support.
+    if not contains_target_arch and any(_contains_arch_token(lowered, tok) for tok in UNSUPPORTED_ARCH_TOKENS):
+        contains_any_arch = True
+        contains_other_arch = True
     if contains_other_arch and not contains_target_arch:
         return None
 
@@ -1525,6 +1549,12 @@ def score_asset(name: str, platform_info: PlatformInfo) -> int | None:
     if "sha256" in lowered or "checksums" in lowered or "sum" in lowered:
         return None
     return score
+
+
+def _contains_arch_token(lowered: str, token: str) -> bool:
+    # Most upstream assets delimit arch tokens with '-' or '_' characters.
+    # Prefer a loose boundary check to avoid false positives in project names.
+    return re.search(rf"(?:^|[^a-z0-9_]){re.escape(token)}(?:$|[^a-z0-9_])", lowered) is not None
 
 
 def normalize_repo_url(raw: str) -> str:
