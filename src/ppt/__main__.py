@@ -97,6 +97,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     shell_env_parser.set_defaults(handler=cmd_shell_env)
 
+    # Internal helper for shell completion.
+    complete_parser = subparsers.add_parser("_complete", help=argparse.SUPPRESS)
+    complete_sub = complete_parser.add_subparsers(dest="complete_command")
+    complete_packages = complete_sub.add_parser("packages", help=argparse.SUPPRESS)
+    complete_packages.add_argument("--query", default="")
+    complete_packages.set_defaults(handler=cmd_complete_packages)
+
     update_shell_parser = subparsers.add_parser(
         "update-shell-config",
         help="Add ppt shell init to your shell config",
@@ -210,6 +217,35 @@ def cmd_update_shell_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_complete_packages(args: argparse.Namespace) -> int:
+    query = (args.query or "").strip()
+
+    config_dir = Path(os.environ.get("PPT_CONFIG_DIR", Path.home() / ".config" / "ppt")).expanduser()
+    config_file = config_dir / "packages.toml"
+    config = read_package_file(config_file)
+    if not config:
+        return 0
+
+    owner_repos = [owner_repo_name(entry.repo) for entry in config]
+    short_names: list[str] = [item.split("/")[-1] for item in owner_repos]
+    short_counts: dict[str, int] = {}
+    for item in short_names:
+        short_counts[item] = short_counts.get(item, 0) + 1
+
+    candidates: set[str] = set()
+    for owner_repo in owner_repos:
+        candidates.add(owner_repo)
+        short = owner_repo.split("/")[-1]
+        if short_counts.get(short, 0) == 1:
+            candidates.add(short)
+
+    for value in sorted(candidates):
+        if query and not value.startswith(query):
+            continue
+        sys.stdout.write(value + "\n")
+    return 0
+
+
 def shell_env_eval_line(shell: str) -> str:
     # Use an absolute path so this works before PATH is set.
     if shell == "fish":
@@ -264,16 +300,34 @@ _ppt() {
     return 0
   fi
   case \"$cmd\" in
+    remove|info)
+      if [ \"$COMP_CWORD\" -eq 2 ] && [[ \"$cur\" != -* ]]; then
+        COMPREPLY=( $(ppt _complete packages --query \"$cur\") )
+        return 0
+      fi
+      COMPREPLY=()
+      ;;
+    prefix)
+      if [ \"$COMP_CWORD\" -eq 2 ] && [[ \"$cur\" != -* ]]; then
+        COMPREPLY=( $(ppt _complete packages --query \"$cur\") )
+        return 0
+      fi
+      COMPREPLY=()
+      ;;
+    upgrade)
+      if [ \"$COMP_CWORD\" -ge 2 ] && [[ \"$cur\" != -* ]]; then
+        COMPREPLY=( $(ppt _complete packages --query \"$cur\") )
+        return 0
+      fi
+      COMPREPLY=()
+      ;;
     add)
       COMPREPLY=( $(compgen -W '--version --prefix' -- \"$cur\") )
       ;;
     sync)
       COMPREPLY=( $(compgen -W '--check --quiet' -- \"$cur\") )
       ;;
-    upgrade)
-      COMPREPLY=()
-      ;;
-    remove|prefix|list|info)
+    list)
       COMPREPLY=()
       ;;
     *)
@@ -323,6 +377,21 @@ _ppt() {
         sync)
           _arguments '--check[Check only]' '--quiet[Suppress normal output for --check]'
           ;;
+        remove|info)
+          if [[ $CURRENT -eq 3 && $PREFIX != -* ]]; then
+            compadd -- ${(f)$(ppt _complete packages --query "$PREFIX")}
+          fi
+          ;;
+        prefix)
+          if [[ $CURRENT -eq 3 && $PREFIX != -* ]]; then
+            compadd -- ${(f)$(ppt _complete packages --query "$PREFIX")}
+          fi
+          ;;
+        upgrade)
+          if [[ $CURRENT -ge 3 && $PREFIX != -* ]]; then
+            compadd -- ${(f)$(ppt _complete packages --query "$PREFIX")}
+          fi
+          ;;
       esac
       ;;
   esac
@@ -358,6 +427,11 @@ complete -c ppt -n "__fish_seen_subcommand_from add" -l version -r -d "Install a
 complete -c ppt -n "__fish_seen_subcommand_from add" -l prefix -r -d "Command prefix"
 complete -c ppt -n "__fish_seen_subcommand_from sync" -l check -d "Check only"
 complete -c ppt -n "__fish_seen_subcommand_from sync" -l quiet -d "Suppress normal output for --check"
+
+complete -c ppt -n "__fish_seen_subcommand_from remove" -a "(ppt _complete packages --query (commandline -ct))" -d "Configured package"
+complete -c ppt -n "__fish_seen_subcommand_from info" -a "(ppt _complete packages --query (commandline -ct))" -d "Configured package"
+complete -c ppt -n "__fish_seen_subcommand_from prefix" -a "(ppt _complete packages --query (commandline -ct))" -d "Configured package"
+complete -c ppt -n "__fish_seen_subcommand_from upgrade" -a "(ppt _complete packages --query (commandline -ct))" -d "Configured package"
 """
 
 
