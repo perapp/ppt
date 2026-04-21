@@ -138,6 +138,6 @@ package as unavailable on this machine.
 the system package manager for operating system packages, shared libraries, and
 services. Use `ppt` for personal CLI tools installed in your home directory.
 
-## Forking and development
+## Contributing
 
 For information how to contribute or fork this project, see [CONTRIBUTING.md](CONTRIBUTING.md).
