@@ -131,7 +131,7 @@ exit 2
 
     launcher = ppt_home / "bin" / "ppt"
     assert launcher.exists()
-    assert launcher.is_symlink()
+    assert not launcher.is_symlink()
     assert launcher.stat().st_mode & stat.S_IXUSR
 
     packages_toml = (ppt_config / "packages.toml").read_text(encoding="utf-8")

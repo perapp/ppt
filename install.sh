@@ -95,6 +95,12 @@ VERSION=${rel_info[0]}
 ASSET_NAME=${rel_info[1]}
 ASSET_URL=${rel_info[2]}
 
+# GitLab package registry asset links may require authentication even for public
+# projects. Prefer the job artifact URL pattern when we detect a packages link.
+if [[ "$ASSET_URL" == *"/-/packages/generic/"* ]]; then
+  ASSET_URL="$PPT_REPO_URL/-/jobs/artifacts/$VERSION/raw/dist/$ASSET_NAME?job=build_release_assets"
+fi
+
 ASSET_PATH="$PPT_HOME/cache/downloads/$ASSET_NAME"
 if [ ! -f "$ASSET_PATH" ] || [ ! -s "$ASSET_PATH" ]; then
   tmp_asset="$ASSET_PATH.tmp"
@@ -108,16 +114,24 @@ rm -rf "$PACKAGE_DIR"
 mkdir -p "$PACKAGE_DIR"
 tar -xzf "$ASSET_PATH" -C "$PACKAGE_DIR"
 
-if [ ! -x "$PACKAGE_DIR/bin/ppt" ]; then
-  printf 'downloaded release asset did not contain bin/ppt\n' >&2
+if [ ! -f "$PACKAGE_DIR/src/ppt/__main__.py" ]; then
+  printf 'downloaded release asset did not contain src/ppt\n' >&2
   exit 1
 fi
 
-# Activate the installed launcher.
-tmp_link="$BIN_DIR/.ppt.tmp.$$"
-rm -f "$tmp_link"
-ln -s "$PACKAGE_DIR/bin/ppt" "$tmp_link"
-mv -f "$tmp_link" "$BIN_DIR/ppt"
+# Install a stable launcher that points at the installed sources.
+tmp_launcher="$BIN_DIR/.ppt.tmp.$$"
+rm -f "$tmp_launcher"
+cat >"$tmp_launcher" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+export PPT_HOME="${PPT_HOME}"
+export PPT_CONFIG_DIR="${PPT_CONFIG_DIR}"
+export PYTHONPATH="${PACKAGE_DIR}/src\${PYTHONPATH:+:\$PYTHONPATH}"
+exec python3 -m ppt "\$@"
+EOF
+chmod 755 "$tmp_launcher"
+mv -f "$tmp_launcher" "$BIN_DIR/ppt"
 
 # Seed config + lock + state so ppt can manage itself.
 cat >"$PPT_CONFIG_DIR/packages.toml" <<EOF
