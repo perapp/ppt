@@ -26,6 +26,10 @@ SUPPORTED_ARCHIVES = (
 )
 
 
+SLEEP_SECONDS_WITH_TOKEN = 0.2
+SLEEP_SECONDS_NO_TOKEN = 2.0
+
+
 class NoRelease(Exception):
     pass
 
@@ -44,7 +48,9 @@ class RateLimited(Exception):
 def main() -> int:
     load_dotenv_from_repo_root()
 
-    if not (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
+    has_token = bool(os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
+    sleep_seconds = SLEEP_SECONDS_WITH_TOKEN if has_token else SLEEP_SECONDS_NO_TOKEN
+    if not has_token:
         print("WARN: no GH_TOKEN/GITHUB_TOKEN found; GitHub API is limited and may rate limit quickly")
 
     ap = argparse.ArgumentParser(
@@ -89,15 +95,15 @@ def main() -> int:
         for idx, url in enumerate(urls, start=1):
             pct = (idx / total * 100.0) if total else 100.0
             print(f"{idx}/{total} {pct:.2f}% {url}")
+            attempted = False
             try:
-                out_path = process_one(
+                out_path, attempted = process_one(
                     url,
                     base_dir=args.base_dir,
                     max_asset_bytes=args.max_asset_bytes,
                     force=args.force,
                 )
-                if out_path is not None:
-                    print(out_path)
+                _ = out_path
             except RateLimited as exc:
                 msg = "GitHub API rate limit exceeded"
                 when = None
@@ -112,6 +118,10 @@ def main() -> int:
                 return 2
             except Exception as exc:
                 print(f"ERROR: {url}: {exc}")
+            finally:
+                # Be polite to the GitHub API and reduce the chance of secondary rate limiting.
+                if attempted and sleep_seconds > 0:
+                    time.sleep(sleep_seconds)
     except KeyboardInterrupt:
         # Writes are atomic; safe to restart.
         return 130
@@ -200,13 +210,13 @@ def _repo_root() -> Path:
     return here.parents[1]
 
 
-def process_one(project_url: str, *, base_dir: Path, max_asset_bytes: int, force: bool) -> Path | None:
+def process_one(project_url: str, *, base_dir: Path, max_asset_bytes: int, force: bool) -> tuple[Path | None, bool]:
     repo = parse_github_repo(project_url)
     out_path = asset_list_path(base_dir, repo)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     if out_path.exists() and not force:
-        return None
+        return None, False
 
     fetched_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     try:
@@ -216,13 +226,13 @@ def process_one(project_url: str, *, base_dir: Path, max_asset_bytes: int, force
             out_path,
             {"__meta__": {"repo": project_url, "status": "no_release", "fetched_at": fetched_at}},
         )
-        return out_path
+        return out_path, True
     except RepoNotFound:
         write_json_atomic(
             out_path,
             {"__meta__": {"repo": project_url, "status": "not_found", "fetched_at": fetched_at}},
         )
-        return out_path
+        return out_path, True
 
     out: dict[str, dict] = {
         "__meta__": {
@@ -254,7 +264,7 @@ def process_one(project_url: str, *, base_dir: Path, max_asset_bytes: int, force
         out[a.name] = info
 
     write_json_atomic(out_path, out)
-    return out_path
+    return out_path, True
 
 
 def write_json_atomic(path: Path, obj: object) -> None:
