@@ -30,7 +30,11 @@ build_release_assets:
       cat >"$tmp/bin/ppt" <<'EOF'
       #!/usr/bin/env bash
       set -euo pipefail
-      APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+      SCRIPT_PATH="$0"
+      if command -v readlink >/dev/null 2>&1; then
+        SCRIPT_PATH=$(readlink -f -- "$0" 2>/dev/null || printf '%s' "$0")
+      fi
+      APP_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")/.." && pwd)
       export PYTHONPATH="$APP_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
       exec python3 -m ppt "$@"
       EOF
