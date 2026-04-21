@@ -6,15 +6,25 @@ RUN apt-get update -qq && apt-get install -y \
     adduser \
     bash \
     ca-certificates \
-    curl \
+    sudo \
     python3 
 
-RUN adduser user
+RUN adduser --disabled-password --gecos '' user
+
+# Passwordless sudo for exploratory sandboxing.
+RUN usermod -aG sudo user \
+  && printf 'user ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/user \
+  && chmod 0440 /etc/sudoers.d/user
+
 USER user
 ENV HOME=/home/user
 WORKDIR $HOME
 
-COPY install.sh /tmp/
-RUN cat /tmp/install.sh | bash
+# Install a launcher that runs ppt from the mounted /workspace checkout.
+RUN mkdir -p /home/user/.local/ppt/bin
+COPY --chown=user:user dev/ppt-sandbox-launcher.sh /home/user/.local/ppt/bin/ppt
+RUN chmod 0755 /home/user/.local/ppt/bin/ppt
+
+ENV PATH=$PATH:$HOME/.local/ppt/bin
 
 CMD ["bash"]

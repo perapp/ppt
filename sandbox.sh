@@ -14,5 +14,4 @@ if [[ $PROJECT_HOME/dev/Containerfile.sandbox -nt $PROJECT_HOME/dev/.image.sandb
    touch $PROJECT_HOME/dev/.image.sandbox
 fi
 
-podman run --rm -ti ppt:sandbox "$@"
-
+podman run --rm -ti -v "$PROJECT_HOME:/workspace:Z" ppt:sandbox

@@ -199,5 +199,13 @@ receipt = {
 PY
 
 printf 'Installed ppt to %s\n' "$BIN_DIR/ppt"
-printf 'Add %s to PATH if needed:\n' "$BIN_DIR"
+
+if [ -t 0 ]; then
+  # Let ppt handle prompting and idempotency.
+  "$BIN_DIR/ppt" update-shell-config || true
+fi
+
+printf 'If needed, add %s to PATH:\n' "$BIN_DIR"
 printf '  export PATH="%s:\$PATH"\n' "$BIN_DIR"
+printf 'To (re)configure shell init later run:\n'
+printf '  %s update-shell-config\n' "$BIN_DIR/ppt"

@@ -44,6 +44,18 @@ If needed, add `ppt` to your `PATH`:
 export PATH="$HOME/.local/ppt/bin:$PATH"
 ```
 
+To automatically keep `PATH` and shell completion up to date, add this to your shell init file (for example `~/.bashrc`):
+
+```bash
+eval "$(\"$HOME/.local/ppt/bin/ppt\" shell-env --shell bash)"
+```
+
+Alternatively, let `ppt` update your shell config for you:
+
+```bash
+ppt update-shell-config
+```
+
 ## Usage
 
 ```text

@@ -85,6 +85,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"ppt {__version__}")
     subparsers = parser.add_subparsers(dest="command")
 
+    shell_env_parser = subparsers.add_parser(
+        "shell-env",
+        help="Print shell init code (PATH + completion)",
+    )
+    shell_env_parser.add_argument(
+        "--shell",
+        choices=("bash", "zsh", "fish"),
+        default=None,
+        help="Target shell (defaults to detection from $SHELL)",
+    )
+    shell_env_parser.set_defaults(handler=cmd_shell_env)
+
+    update_shell_parser = subparsers.add_parser(
+        "update-shell-config",
+        help="Add ppt shell init to your shell config",
+    )
+    update_shell_parser.add_argument(
+        "--shell",
+        choices=("bash", "zsh", "fish"),
+        default=None,
+        help="Target shell (defaults to detection from $SHELL)",
+    )
+    update_shell_parser.add_argument(
+        "--rc-file",
+        default=None,
+        help="Shell init file to update (defaults based on --shell)",
+    )
+    update_shell_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Do not prompt; apply changes",
+    )
+    update_shell_parser.set_defaults(handler=cmd_update_shell_config)
+
     add_parser = subparsers.add_parser("add", help="Add a package and install it")
     add_parser.add_argument("repo")
     add_parser.add_argument("--version", dest="version")
@@ -125,6 +159,206 @@ def build_parser() -> argparse.ArgumentParser:
     info_parser.set_defaults(handler=cmd_info)
 
     return parser
+
+
+def cmd_shell_env(args: argparse.Namespace) -> int:
+    shell = args.shell or detect_shell_name()
+    if shell == "bash":
+        sys.stdout.write(render_shell_env_bash())
+        return 0
+    if shell == "zsh":
+        sys.stdout.write(render_shell_env_zsh())
+        return 0
+    if shell == "fish":
+        sys.stdout.write(render_shell_env_fish())
+        return 0
+    raise PptError(f"unsupported shell: {shell}")
+
+
+def cmd_update_shell_config(args: argparse.Namespace) -> int:
+    shell = args.shell or detect_shell_name()
+    rc_file = Path(args.rc_file).expanduser() if args.rc_file else default_rc_file(shell)
+    rc_file = rc_file.expanduser()
+
+    rc_file.parent.mkdir(parents=True, exist_ok=True)
+    if not rc_file.exists():
+        rc_file.write_text("", encoding="utf-8")
+
+    existing = rc_file.read_text(encoding="utf-8", errors="replace")
+
+    eval_line = shell_env_eval_line(shell)
+    if shell_env_config_present(shell, existing):
+        print(f"ppt shell init already present in {rc_file}")
+        return 0
+
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise PptError(
+                f"refusing to prompt on non-interactive stdin; rerun with --yes to update {rc_file}"
+            )
+        reply = input(f"Enable ppt shell init (PATH + completion) in {rc_file}? [y/N] ").strip()
+        if reply.lower() not in {"y", "yes"}:
+            print("skipped shell config update")
+            return 0
+
+    with rc_file.open("a", encoding="utf-8") as handle:
+        if existing and not existing.endswith("\n"):
+            handle.write("\n")
+        handle.write(eval_line)
+        handle.write("\n")
+    print(f"added ppt shell init to {rc_file}")
+    return 0
+
+
+def shell_env_eval_line(shell: str) -> str:
+    # Use an absolute path so this works before PATH is set.
+    if shell == "fish":
+        return 'eval ("$HOME/.local/ppt/bin/ppt" shell-env --shell fish)'
+    return f'eval "$("${{PPT_HOME:-$HOME/.local/ppt}}/bin/ppt" shell-env --shell {shell})"'
+
+
+def shell_env_config_present(shell: str, text: str) -> bool:
+    # Be tolerant of different quoting/styles; avoid duplicate inserts.
+    # We only consider it present if it looks like it wires `ppt shell-env`.
+    # (No markers are required.)
+    if shell == "fish":
+        return "shell-env --shell fish" in text and "ppt" in text
+    return f"shell-env --shell {shell}" in text and "ppt" in text
+
+
+def detect_shell_name() -> str:
+    raw = (os.environ.get("SHELL") or "").strip()
+    name = Path(raw).name
+    if name in {"bash", "zsh", "fish"}:
+        return name
+    return "bash"
+
+
+def default_rc_file(shell: str) -> Path:
+    home = Path.home()
+    if shell == "bash":
+        return home / ".bashrc"
+    if shell == "zsh":
+        return home / ".zshrc"
+    if shell == "fish":
+        return home / ".config" / "fish" / "config.fish"
+    return home / ".bashrc"
+
+
+def render_shell_env_bash() -> str:
+    # Keep this fast and side-effect free: just print init code.
+    return """# ppt shell-env (bash)
+_ppt_bin=\"${PPT_HOME:-$HOME/.local/ppt}/bin\"
+case ":$PATH:" in
+  *\":${_ppt_bin}:\"*) ;;
+  *) PATH=\"${_ppt_bin}:$PATH\"; export PATH ;;
+esac
+unset _ppt_bin
+
+_ppt() {
+  local cur cmd
+  cur=\"${COMP_WORDS[COMP_CWORD]}\"
+  cmd=\"${COMP_WORDS[1]}\"
+  if [ \"$COMP_CWORD\" -eq 1 ]; then
+    COMPREPLY=( $(compgen -W 'add remove prefix sync upgrade list info' -- \"$cur\") )
+    return 0
+  fi
+  case \"$cmd\" in
+    add)
+      COMPREPLY=( $(compgen -W '--version --prefix' -- \"$cur\") )
+      ;;
+    sync)
+      COMPREPLY=( $(compgen -W '--check --quiet' -- \"$cur\") )
+      ;;
+    upgrade)
+      COMPREPLY=()
+      ;;
+    remove|prefix|list|info)
+      COMPREPLY=()
+      ;;
+    *)
+      COMPREPLY=( $(compgen -W 'add remove prefix sync upgrade list info' -- \"$cur\") )
+      ;;
+  esac
+}
+complete -F _ppt ppt
+"""
+
+
+def render_shell_env_zsh() -> str:
+    return """# ppt shell-env (zsh)
+_ppt_bin=\"${PPT_HOME:-$HOME/.local/ppt}/bin\"
+case ":$PATH:" in
+  *\":${_ppt_bin}:\"*) ;;
+  *) PATH=\"${_ppt_bin}:$PATH\"; export PATH ;;
+esac
+unset _ppt_bin
+
+_ppt() {
+  local -a commands
+  commands=(
+    'add:Add a package and install it'
+    'remove:Remove a package'
+    'prefix:Set a package prefix'
+    'sync:Apply config and lock state'
+    'upgrade:Upgrade unpinned packages'
+    'list:List configured packages'
+    'info:Show package details'
+  )
+
+  _arguments -C \
+    '1:command:->cmds' \
+    '*::args:->args'
+
+  case $state in
+    cmds)
+      _describe 'command' commands
+      return
+      ;;
+    args)
+      case $words[2] in
+        add)
+          _arguments '--version=[Install a specific version]' '--prefix=[Command prefix]'
+          ;;
+        sync)
+          _arguments '--check[Check only]' '--quiet[Suppress normal output for --check]'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+if command -v compdef >/dev/null 2>&1; then
+  compdef _ppt ppt
+fi
+"""
+
+
+def render_shell_env_fish() -> str:
+    return """# ppt shell-env (fish)
+set -l ppt_home "$HOME/.local/ppt"
+if set -q PPT_HOME
+  set ppt_home "$PPT_HOME"
+end
+set -l ppt_bin "$ppt_home/bin"
+if not contains -- "$ppt_bin" $PATH
+  set -gx PATH "$ppt_bin" $PATH
+end
+
+complete -c ppt -f
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a add -d "Add a package and install it"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a remove -d "Remove a package"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a prefix -d "Set a package prefix"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a sync -d "Apply config and lock state"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a upgrade -d "Upgrade unpinned packages"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a list -d "List configured packages"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a info -d "Show package details"
+
+complete -c ppt -n "__fish_seen_subcommand_from add" -l version -r -d "Install a specific version"
+complete -c ppt -n "__fish_seen_subcommand_from add" -l prefix -r -d "Command prefix"
+complete -c ppt -n "__fish_seen_subcommand_from sync" -l check -d "Check only"
+complete -c ppt -n "__fish_seen_subcommand_from sync" -l quiet -d "Suppress normal output for --check"
+"""
 
 
 def cmd_add(args: argparse.Namespace) -> int:
