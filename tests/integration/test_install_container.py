@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -96,16 +97,49 @@ exec python3 -m ppt "$@"
                 tf.add(tmp / "bin", arcname="bin")
                 tf.add(repo_root / "src" / "ppt", arcname="src/ppt")
 
-        volume = f"{workspace}:/workspace"
-        if runtime == "podman":
-            volume = f"{workspace}:/workspace:Z"
-
         env_flags = [
             "-e",
             f"PPT_REPO_URL={repo_url}",
             "-e",
             "PPT_INSTALL_ASSET_URL=file:///workspace/dist/ppt-sandbox-linux.tar.gz",
         ]
+
+        # In GitLab CI we use docker:dind (remote daemon). Bind mounts from the
+        # job container filesystem won't exist inside the dind daemon, so the
+        # container won't see the workspace. Detect that case and fall back to a
+        # tiny image build that copies the workspace into the image.
+        remote_docker = runtime == "docker" and (os.environ.get("DOCKER_HOST") or "").startswith("tcp://")
+        if remote_docker:
+            dockerfile = workspace / "Dockerfile"
+            dockerfile.write_text(
+                """FROM ubuntu:24.04
+WORKDIR /workspace
+COPY dist/ /workspace/dist/
+""",
+                encoding="utf-8",
+            )
+            image = f"ppt-test-install:{uuid.uuid4().hex}"
+            subprocess.run([runtime, "build", "-t", image, str(workspace)], check=True, capture_output=True)
+            try:
+                cmd = [
+                    runtime,
+                    "run",
+                    "--rm",
+                    *env_flags,
+                    image,
+                    "bash",
+                    "-lc",
+                    "apt-get update -qq && apt-get install -y -qq curl ca-certificates python3 tar >/dev/null && bash ./dist/install.sh --shell-config no && /root/.local/ppt/bin/ppt list",
+                ]
+                proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                assert expected_repo_name in proc.stdout
+            finally:
+                subprocess.run([runtime, "rmi", "-f", image], check=False, capture_output=True)
+            return
+
+        volume = f"{workspace}:/workspace"
+        if runtime == "podman":
+            volume = f"{workspace}:/workspace:Z"
 
         cmd = [
             runtime,
