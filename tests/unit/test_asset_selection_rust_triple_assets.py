@@ -4,7 +4,7 @@ from ppt import __main__ as ppt_main
 
 
 def test_rust_target_triple_is_recognized() -> None:
-    platform_info = ppt_main.PlatformInfo(os_name="linux", arch="x86_64", libc="glibc")
+    platform_info = ppt_main.PlatformInfo(os_name="linux", vendor="unknown", arch="x86_64", env="gnu")
     release = {
         "tag_name": "v0",
         "assets": [

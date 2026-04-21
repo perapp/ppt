@@ -93,3 +93,22 @@ To enable the online check in GitLab CI:
 Security notes:
 - Treat access tokens as secrets. Do not paste them into chat or commit them to the repo.
 - Prefer short expirations and rotate when needed.
+
+## Platform Identifiers (Rust-Style)
+
+`ppt` identifies a target platform using a Rust-style target quadruple:
+
+`<arch>-<vendor>-<os>-<env>`
+
+Examples:
+- `x86_64-unknown-linux-gnu`
+- `x86_64-unknown-linux-musl`
+- `aarch64-unknown-linux-gnu`
+- `armv7-unknown-linux-gnueabihf`
+
+Notes:
+- The vendor is currently always `unknown`.
+- The `env` field is used as a coarse libc/ABI selector. We use `gnu` to mean "glibc-based" and `musl` for musl-based systems.
+- For `armv7`, Rust targets typically encode hard-float as `*eabihf`.
+
+You can print the current platform with `ppt platform`.

@@ -4,7 +4,7 @@ from ppt import __main__ as ppt_main
 
 
 def test_armv7_prefers_eabihf_and_rejects_armv6() -> None:
-    platform_info = ppt_main.PlatformInfo(os_name="linux", arch="armv7", libc="glibc")
+    platform_info = ppt_main.PlatformInfo(os_name="linux", vendor="unknown", arch="armv7", env="gnueabihf")
     release = {
         "tag_name": "v0",
         "assets": [

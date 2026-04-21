@@ -4,7 +4,7 @@ from ppt import __main__ as ppt_main
 
 
 def test_selects_musl_asset_on_musl_platform() -> None:
-    platform_info = ppt_main.PlatformInfo(os_name="linux", arch="x86_64", libc="musl")
+    platform_info = ppt_main.PlatformInfo(os_name="linux", vendor="unknown", arch="x86_64", env="musl")
     release = {
         "tag_name": "v0",
         "assets": [
@@ -18,7 +18,7 @@ def test_selects_musl_asset_on_musl_platform() -> None:
 
 
 def test_prefers_glibc_asset_on_glibc_platform() -> None:
-    platform_info = ppt_main.PlatformInfo(os_name="linux", arch="x86_64", libc="glibc")
+    platform_info = ppt_main.PlatformInfo(os_name="linux", vendor="unknown", arch="x86_64", env="gnu")
     release = {
         "tag_name": "v0",
         "assets": [

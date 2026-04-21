@@ -4,7 +4,7 @@ from ppt import __main__ as ppt_main
 
 
 def test_accepts_arch_agnostic_linux_asset_as_fallback() -> None:
-    platform_info = ppt_main.PlatformInfo(os_name="linux", arch="x86_64", libc="glibc")
+    platform_info = ppt_main.PlatformInfo(os_name="linux", vendor="unknown", arch="x86_64", env="gnu")
     release = {
         "tag_name": "v0",
         "assets": [
@@ -17,7 +17,7 @@ def test_accepts_arch_agnostic_linux_asset_as_fallback() -> None:
 
 
 def test_prefers_arch_specific_over_arch_agnostic() -> None:
-    platform_info = ppt_main.PlatformInfo(os_name="linux", arch="x86_64", libc="glibc")
+    platform_info = ppt_main.PlatformInfo(os_name="linux", vendor="unknown", arch="x86_64", env="gnu")
     release = {
         "tag_name": "v0",
         "assets": [

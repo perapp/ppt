@@ -85,7 +85,7 @@ class CliTestCase(unittest.TestCase):
         self.config.mkdir()
         self.releases = FakeReleaseStore(self.root / "releases")
         self.releases.root.mkdir()
-        self.platform = ppt_main.PlatformInfo(os_name="linux", arch="x86_64", libc="glibc")
+        self.platform = ppt_main.PlatformInfo(os_name="linux", vendor="unknown", arch="x86_64", env="gnu")
 
     def run_ppt(self, *args: str) -> tuple[int, str, str]:
         stdout = io.StringIO()
@@ -114,6 +114,13 @@ class CliTestCase(unittest.TestCase):
 
 
 class TestCliFlows(CliTestCase):
+    def test_platform_prints_rust_style_quadruple(self) -> None:
+        code, stdout, stderr = self.run_ppt("platform")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(stdout.strip(), "x86_64-unknown-linux-gnu")
+
     def test_add_installs_and_records_lock(self) -> None:
         repo = "https://github.com/neovim/neovim"
         self.releases.add_release(repo, "v1.0.0", {"nvim": "#!/bin/sh\necho nvim v1\n"})

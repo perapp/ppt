@@ -23,8 +23,9 @@ from . import __version__
 
 
 SUPPORTED_ARCHES = {
+    # Canonical arch names match Rust target arch naming.
     "x86_64": ["x86_64", "amd64", "x64", "linux64"],
-    "arm64": ["aarch64", "arm64"],
+    "aarch64": ["aarch64", "arm64"],
     # armv7/hard-float is commonly tagged as armhf / eabihf.
     "armv7": ["armv7l", "armv7", "armhf", "eabihf", "gnueabihf"],
 }
@@ -46,12 +47,15 @@ class PackageConfig:
 @dataclass
 class PlatformInfo:
     os_name: str
+    vendor: str
     arch: str
-    libc: str
+    env: str
 
     @property
     def key(self) -> str:
-        return f"{self.os_name}-{self.arch}-{self.libc}"
+        # Rust-style target quadruple: <arch>-<vendor>-<os>-<env>.
+        # Example: x86_64-unknown-linux-gnu, aarch64-unknown-linux-musl.
+        return f"{self.arch}-{self.vendor}-{self.os_name}-{self.env}"
 
 
 @dataclass
@@ -184,6 +188,9 @@ def build_parser() -> argparse.ArgumentParser:
     info_parser.add_argument("package")
     info_parser.set_defaults(handler=cmd_info)
 
+    platform_parser = subparsers.add_parser("platform", help="Print current platform identifier")
+    platform_parser.set_defaults(handler=cmd_platform)
+
     return parser
 
 
@@ -315,7 +322,7 @@ _ppt() {
   cur=\"${COMP_WORDS[COMP_CWORD]}\"
   cmd=\"${COMP_WORDS[1]}\"
   if [ \"$COMP_CWORD\" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W 'add remove prefix sync upgrade list info' -- \"$cur\") )
+    COMPREPLY=( $(compgen -W 'add remove prefix sync upgrade list info platform' -- \"$cur\") )
     return 0
   fi
   case \"$cmd\" in
@@ -349,8 +356,11 @@ _ppt() {
     list)
       COMPREPLY=()
       ;;
+    platform)
+      COMPREPLY=()
+      ;;
     *)
-      COMPREPLY=( $(compgen -W 'add remove prefix sync upgrade list info' -- \"$cur\") )
+      COMPREPLY=( $(compgen -W 'add remove prefix sync upgrade list info platform' -- \"$cur\") )
       ;;
   esac
 }
@@ -377,6 +387,7 @@ _ppt() {
     'upgrade:Upgrade unpinned packages'
     'list:List configured packages'
     'info:Show package details'
+    'platform:Print current platform identifier'
   )
 
   _arguments -C \
@@ -434,13 +445,14 @@ if not contains -- "$ppt_bin" $PATH
 end
 
 complete -c ppt -f
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a add -d "Add a package and install it"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a remove -d "Remove a package"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a prefix -d "Set a package prefix"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a sync -d "Apply config and lock state"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a upgrade -d "Upgrade unpinned packages"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a list -d "List configured packages"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info" -a info -d "Show package details"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a add -d "Add a package and install it"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a remove -d "Remove a package"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a prefix -d "Set a package prefix"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a sync -d "Apply config and lock state"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a upgrade -d "Upgrade unpinned packages"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a list -d "List configured packages"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a info -d "Show package details"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a platform -d "Print current platform identifier"
 
 complete -c ppt -n "__fish_seen_subcommand_from add" -l version -r -d "Install a specific version"
 complete -c ppt -n "__fish_seen_subcommand_from add" -l prefix -r -d "Command prefix"
@@ -812,6 +824,9 @@ def cmd_info(args: argparse.Namespace) -> int:
     print(f"wanted: {entry.version or 'latest'}")
     print(f"locked: {lock.get(repo, '-')}")
     print(f"installed: {repo_state.get('installed_version', '-')}")
+    asset_name = (repo_state.get("asset_name") or "").strip()
+    if asset_name:
+        print(f"asset: {asset_name}")
     print(f"status: {repo_state.get('status', 'configured')}")
     print(f"prefix: {entry.prefix if entry.prefix is not None else ''}")
     if repo_state.get("message"):
@@ -820,6 +835,12 @@ def cmd_info(args: argparse.Namespace) -> int:
         print("bin links:")
         for item in repo_state["bin_links"]:
             print(f"  {item}")
+    return 0
+
+
+def cmd_platform(_args: argparse.Namespace) -> int:
+    platform_info = detect_platform()
+    print(platform_info.key)
     return 0
 
 
@@ -857,22 +878,32 @@ def detect_platform() -> PlatformInfo:
     if machine in ("x86_64", "amd64"):
         arch = "x86_64"
     elif machine in ("aarch64", "arm64"):
-        arch = "arm64"
+        arch = "aarch64"
     elif machine in ("armv7l", "armv7", "arm"):
         arch = "armv7"
     else:
         raise PptError(f"unsupported architecture: {machine}")
 
-    libc = detect_libc()
-    return PlatformInfo(os_name="linux", arch=arch, libc=libc)
+    env = detect_env(arch)
+    return PlatformInfo(os_name="linux", vendor="unknown", arch=arch, env=env)
 
 
-def detect_libc() -> str:
+def detect_env(arch: str) -> str:
+    """Detect the Rust-style target environment for the current Linux system.
+
+    We intentionally keep this coarse:
+    - "gnu" for glibc-based systems
+    - "musl" for musl-based systems
+
+    For armv7, Rust targets usually encode hard-float as "*eabihf"; we assume
+    that for modern Linux distros.
+    """
+
     libc_name, _ = platform.libc_ver()
     if libc_name and libc_name.lower().startswith("glibc"):
-        return "glibc"
+        return "gnueabihf" if arch == "armv7" else "gnu"
     if libc_name and libc_name.lower().startswith("musl"):
-        return "musl"
+        return "musleabihf" if arch == "armv7" else "musl"
 
     try:
         proc = subprocess.run(
@@ -882,12 +913,12 @@ def detect_libc() -> str:
             text=True,
         )
     except FileNotFoundError:
-        return "glibc"
+        return "gnueabihf" if arch == "armv7" else "gnu"
 
     text = f"{proc.stdout}\n{proc.stderr}".lower()
     if "musl" in text:
-        return "musl"
-    return "glibc"
+        return "musleabihf" if arch == "armv7" else "musl"
+    return "gnueabihf" if arch == "armv7" else "gnu"
 
 
 def install_package(
@@ -1449,7 +1480,9 @@ def score_asset(name: str, platform_info: PlatformInfo) -> int | None:
 
     contains_musl = "musl" in lowered
     contains_glibc = "glibc" in lowered or "gnu" in lowered
-    if platform_info.libc == "musl":
+
+    is_musl_platform = platform_info.env.startswith("musl")
+    if is_musl_platform:
         if contains_glibc and not contains_musl:
             return None
         if contains_musl:

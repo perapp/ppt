@@ -4,7 +4,7 @@ from ppt import __main__ as ppt_main
 
 
 def test_go_style_linux_amd64_is_accepted() -> None:
-    platform_info = ppt_main.PlatformInfo(os_name="linux", arch="x86_64", libc="glibc")
+    platform_info = ppt_main.PlatformInfo(os_name="linux", vendor="unknown", arch="x86_64", env="gnu")
     release = {
         "tag_name": "v0",
         "assets": [
@@ -17,7 +17,7 @@ def test_go_style_linux_amd64_is_accepted() -> None:
 
 
 def test_go_style_linux_arm64_is_rejected_on_x86_64() -> None:
-    platform_info = ppt_main.PlatformInfo(os_name="linux", arch="x86_64", libc="glibc")
+    platform_info = ppt_main.PlatformInfo(os_name="linux", vendor="unknown", arch="x86_64", env="gnu")
     release = {
         "tag_name": "v0",
         "assets": [
