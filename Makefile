@@ -67,8 +67,12 @@ sandbox: release-assets sandbox-image
 	fi
 	@$(RUNTIME) run --rm -it \
 	  -v "$(SANDBOX_VOLUME)" \
-	  -w /workspace \
 	  ppt:sandbox
+
+empty-sandbox: release-assets sandbox-image
+	@$(RUNTIME) run --rm -it \
+	  -v "$(SANDBOX_VOLUME)" \
+	  ppt:sandbox bash
 
 clean:
 	rm -rf $(DIST_DIR)
