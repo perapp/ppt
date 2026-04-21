@@ -96,18 +96,26 @@ Security notes:
 
 ## Platform Identifiers (Rust-Style)
 
-`ppt` identifies a target platform using a Rust-style target quadruple:
+`ppt` identifies a target platform using Rust-style target identifiers:
+
+Most Linux targets use a quadruple:
 
 `<arch>-<vendor>-<os>-<env>`
+
+macOS targets use a triple:
+
+`<arch>-<vendor>-<os>`
 
 Examples:
 - `x86_64-unknown-linux-gnu`
 - `x86_64-unknown-linux-musl`
 - `aarch64-unknown-linux-gnu`
 - `armv7-unknown-linux-gnueabihf`
+- `x86_64-apple-darwin`
+- `aarch64-apple-darwin`
 
 Notes:
-- The vendor is currently always `unknown`.
+- The vendor is currently `unknown` on Linux and `apple` on macOS.
 - The `env` field is used as a coarse libc/ABI selector. We use `gnu` to mean "glibc-based" and `musl` for musl-based systems.
 - For `armv7`, Rust targets typically encode hard-float as `*eabihf`.
 

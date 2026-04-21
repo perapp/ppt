@@ -49,13 +49,16 @@ class PlatformInfo:
     os_name: str
     vendor: str
     arch: str
-    env: str
+    env: str | None
 
     @property
     def key(self) -> str:
-        # Rust-style target quadruple: <arch>-<vendor>-<os>-<env>.
-        # Example: x86_64-unknown-linux-gnu, aarch64-unknown-linux-musl.
-        return f"{self.arch}-{self.vendor}-{self.os_name}-{self.env}"
+        # Rust-style target identifier.
+        # - Linux uses a quadruple: <arch>-<vendor>-<os>-<env>
+        # - macOS uses a triple: <arch>-<vendor>-<os>
+        if self.env:
+            return f"{self.arch}-{self.vendor}-{self.os_name}-{self.env}"
+        return f"{self.arch}-{self.vendor}-{self.os_name}"
 
 
 @dataclass
@@ -874,6 +877,7 @@ def ensure_layout() -> AppPaths:
 
 
 def detect_platform() -> PlatformInfo:
+    system = platform.system().lower()
     machine = platform.machine().lower()
     if machine in ("x86_64", "amd64"):
         arch = "x86_64"
@@ -884,8 +888,15 @@ def detect_platform() -> PlatformInfo:
     else:
         raise PptError(f"unsupported architecture: {machine}")
 
-    env = detect_env(arch)
-    return PlatformInfo(os_name="linux", vendor="unknown", arch=arch, env=env)
+    if system == "linux":
+        env = detect_env(arch)
+        return PlatformInfo(os_name="linux", vendor="unknown", arch=arch, env=env)
+
+    if system == "darwin":
+        # Rust uses vendor=apple and os=darwin.
+        return PlatformInfo(os_name="darwin", vendor="apple", arch=arch, env=None)
+
+    raise PptError(f"unsupported OS: {system}")
 
 
 def detect_env(arch: str) -> str:
@@ -1447,7 +1458,15 @@ def score_asset(name: str, platform_info: PlatformInfo) -> int | None:
     lowered = name.lower()
     if not lowered.endswith(SUPPORTED_ARCHIVES):
         return None
-    if "linux" not in lowered:
+
+    if platform_info.os_name == "linux":
+        if "linux" not in lowered:
+            return None
+    elif platform_info.os_name == "darwin":
+        # Common naming across projects.
+        if not any(token in lowered for token in ("darwin", "macos", "osx")):
+            return None
+    else:
         return None
 
     # Prefer arch-specific assets when present, but allow arch-agnostic assets
@@ -1465,7 +1484,7 @@ def score_asset(name: str, platform_info: PlatformInfo) -> int | None:
         return None
 
     score = 100
-    score += 10 if "linux" in lowered else 0
+    score += 10 if platform_info.os_name in lowered else 0
     score += 20 if lowered.endswith(".tar.gz") else 0
     score += 18 if lowered.endswith(".tgz") else 0
     score += 16 if lowered.endswith(".tar.xz") else 0
@@ -1478,22 +1497,24 @@ def score_asset(name: str, platform_info: PlatformInfo) -> int | None:
         # Arch-agnostic: still acceptable, but worse than a correct arch match.
         score -= 40
 
-    contains_musl = "musl" in lowered
-    contains_glibc = "glibc" in lowered or "gnu" in lowered
+    if platform_info.os_name == "linux":
+        contains_musl = "musl" in lowered
+        contains_glibc = "glibc" in lowered or "gnu" in lowered
 
-    is_musl_platform = platform_info.env.startswith("musl")
-    if is_musl_platform:
-        if contains_glibc and not contains_musl:
-            return None
-        if contains_musl:
-            score += 20
-    else:
-        if contains_glibc:
-            score += 18
-        if contains_musl:
-            score += 16
-        if not contains_glibc and not contains_musl:
-            score += 8
+        env = platform_info.env or ""
+        is_musl_platform = env.startswith("musl")
+        if is_musl_platform:
+            if contains_glibc and not contains_musl:
+                return None
+            if contains_musl:
+                score += 20
+        else:
+            if contains_glibc:
+                score += 18
+            if contains_musl:
+                score += 16
+            if not contains_glibc and not contains_musl:
+                score += 8
 
     if platform_info.arch == "armv7":
         if "eabihf" in lowered:
