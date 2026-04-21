@@ -77,11 +77,12 @@ ppt info <repo-url|short-id>
   packages.lock.toml
 ```
 
-- `packages.toml` is the desired package set that you can keep under version control
+- `packages.toml` is the desired package set.
 - `packages.lock.toml` records the resolved versions that unpinned packages should use
 
-This means you can share the same `ppt` config across machines while still
-keeping upgrades explicit.
+By keeping these files version controlled, using for example a dot manager like yadm,
+you can share the same `ppt` config and state between machines, VMs and containers
+while still keeping upgrades explicit.
 
 ## Examples
 
@@ -89,17 +90,19 @@ keeping upgrades explicit.
 # install ~/.local/ppt/bin/nvim
 ppt add https://github.com/neovim/neovim
 
-# install ~/.local/ppt/bin/my-nvim
+# install your own fork as ~/.local/ppt/bin/my-nvim
 ppt add https://github.com/myself/neovim --prefix my-
 
-# install ~/.local/ppt/bin/nvim-0.12.1
+# install a specific version as ~/.local/ppt/bin/nvim-0.12.1
 ppt add https://github.com/neovim/neovim --version v0.12.1
 
 # change prefixes so your fork becomes nvim and upstream becomes src-nvim
 ppt prefix https://github.com/neovim/neovim src-
 ppt prefix https://github.com/myself/neovim ""
 
-# apply the shared config and locked versions on this machine
+# check if config or locked versions are outdated on this machine
+# usefull in a dotmanager pull hook or `.bash_profile`.
+ppt sync --check
 ppt sync
 
 # explicitly bump unpinned packages to newer releases
@@ -127,18 +130,13 @@ If a package is configured but has no matching release artifact for the current
 platform, `ppt` should warn and continue. `ppt list` should still show that
 package as unavailable on this machine.
 
-## Testing
-
-Run the hermetic CLI test suite locally with `uv`:
-
-```bash
-uv run pytest
-```
-
 ## Notes
 
 `ppt` is intended to complement, not replace, the system package manager. Use
 the system package manager for operating system packages, shared libraries, and
 services. Use `ppt` for personal CLI tools installed in your home directory.
 
-Implementation notes and design details live in `docs/design.md`.
+## Forking and development
+
+For information how to contribute or fork this project, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
