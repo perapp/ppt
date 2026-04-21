@@ -21,7 +21,14 @@ def iter_yaml_files(repo_root: Path) -> list[Path]:
     return sorted(paths)
 
 
-@pytest.mark.parametrize("path", iter_yaml_files(Path(__file__).resolve().parents[1]))
+def _repo_root() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    raise RuntimeError("failed to locate repo root")
+
+
+@pytest.mark.parametrize("path", iter_yaml_files(_repo_root()))
 def test_yaml_files_parse(path: Path) -> None:
     yaml = YAML(typ="safe")
     text = path.read_text(encoding="utf-8")

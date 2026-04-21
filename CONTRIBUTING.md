@@ -4,24 +4,22 @@
 
 This project uses `uv` for running tests locally.
 
-Run the test suite:
+Run the unit test suite:
 
 ```bash
 uv run pytest
 ```
 
-By default, `pytest` is configured to skip tests marked as `slow`.
-
-Run the full suite (including slow tests):
+Run integration tests:
 
 ```bash
-uv run pytest -q -o addopts=''
+uv run pytest tests/integration
 ```
 
-Run only slow tests:
+Run container integration tests:
 
 ```bash
-uv run pytest -m slow
+uv run pytest tests/integration -m container
 ```
 
 ## CI Config Validation
@@ -32,10 +30,9 @@ In addition, there is an optional GitLab CI Lint API test that can catch semanti
 
 ### GitLab CI Lint API Test
 
-The test is implemented in `tests/test_gitlab_ci_schema.py` and is **opt-in**.
+The test is implemented in `tests/integration/test_gitlab_ci_lint_api.py`.
 
-It is also marked `slow`/`network`, so it is skipped by default unless you run
-the full suite or explicitly include it.
+It is marked `gitlab_api` and runs as part of the integration suite.
 
 Why opt-in:
 - Some GitLab instances do not allow CI lint via `CI_JOB_TOKEN`.
@@ -50,7 +47,7 @@ To enable the online check locally:
 
 ```bash
 export GITLAB_TOKEN=***
-uv run pytest -q tests/test_gitlab_ci_schema.py::test_gitlab_ci_lint_api_validates_config_when_available -rs
+uv run pytest -q tests/integration -m gitlab_api -rs
 ```
 
 Alternatively, you can put the token in a local `.env` file in the repo root

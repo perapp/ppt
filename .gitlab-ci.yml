@@ -2,13 +2,45 @@ stages:
   - test
   - release
 
-test:
+test:unit:
   stage: test
   image: python:3.12-slim
   script:
     - python3 -m pip install --upgrade pip
     - python3 -m pip install uv
-    - uv run pytest -q -o addopts=''
+    - uv run pytest
+
+test:integration:
+  stage: test
+  image: python:3.12-slim
+  script:
+    - python3 -m pip install --upgrade pip
+    - python3 -m pip install uv
+    - uv run pytest tests/integration -m "not container and not gitlab_api"
+
+test:integration:gitlab_api:
+  stage: test
+  image: python:3.12-slim
+  script:
+    - python3 -m pip install --upgrade pip
+    - python3 -m pip install uv
+    - uv run pytest tests/integration -m gitlab_api
+
+test:integration:container:
+  stage: test
+  image: python:3.12-slim
+  services:
+    - name: docker:dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: tcp://docker:2375
+  script:
+    - python3 -m pip install --upgrade pip
+    - python3 -m pip install uv
+    - apt-get update -qq
+    - apt-get install -y -qq docker.io >/dev/null
+    - docker version
+    - uv run pytest tests/integration -m container
 
 build_release_assets:
   stage: release

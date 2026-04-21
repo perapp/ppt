@@ -14,6 +14,7 @@
 
 ## Tests
 
-- Default `uv run pytest` is configured to skip tests marked `slow`.
-- To run the full suite: `uv run pytest -q -o addopts=''`
-- To run only slow tests: `uv run pytest -m slow`
+- Default `uv run pytest` runs the unit suite in `tests/unit`.
+- To run integration tests: `uv run pytest tests/integration`
+- To run container integration tests: `uv run pytest tests/integration -m container`
+- To run GitLab API integration tests: `uv run pytest tests/integration -m gitlab_api`

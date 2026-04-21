@@ -10,9 +10,9 @@ dependencies = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-q -m 'not slow'"
+testpaths = ["tests/unit"]
+addopts = "-q"
 markers = [
-  "slow: slow tests (opt-in)",
-  "network: requires network access (opt-in)",
+  "container: requires container runtime (integration)",
+  "gitlab_api: calls GitLab HTTP APIs (integration)",
 ]

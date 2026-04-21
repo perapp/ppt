@@ -10,9 +10,6 @@ from pathlib import Path
 import pytest
 
 
-pytestmark = pytest.mark.slow
-
-
 def _make_ppt_release_asset(repo_root: Path, out_path: Path) -> None:
     """Create a tarball matching the published ppt release asset layout."""
 
@@ -45,7 +42,7 @@ exec python3 -m ppt "$@"
 
 
 def test_install_script_bootstraps_self_managed_ppt(tmp_path: Path) -> None:
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = next(p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists())
 
     version = "v9.9.9"
     asset_name = f"ppt-{version}-linux.tar.gz"
