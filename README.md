@@ -1,8 +1,6 @@
-# ppt
+![image](docs/assets/ppt_logo_small.png)
 
-<p align="center">
-  <img src="docs/assets/ppt_logo_small.png" alt="ppt logo" width="240" />
-</p>
+# ppt
 
 Personal Package Tool
 
