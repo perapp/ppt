@@ -23,7 +23,7 @@ build_release_assets:
       DIST_DIR="dist"
       mkdir -p "$DIST_DIR"
 
-      out="$DIST_DIR/ppt-${VERSION}-linux-any.tar.gz"
+      out="$DIST_DIR/ppt-${VERSION}-linux.tar.gz"
       tmp=$(mktemp -d)
       mkdir -p "$tmp/bin" "$tmp/src"
       cp -R src/ppt "$tmp/src/ppt"
@@ -62,4 +62,4 @@ create_gitlab_release:
         --name "ppt $VERSION" \
         --tag-name "$VERSION" \
         --description "Release $VERSION" \
-        --assets-link "{\"name\":\"ppt-${VERSION}-linux-any.tar.gz\",\"url\":\"$base_url/ppt-${VERSION}-linux-any.tar.gz\"}"
+        --assets-link "{\"name\":\"ppt-${VERSION}-linux.tar.gz\",\"url\":\"$base_url/ppt-${VERSION}-linux.tar.gz\"}"

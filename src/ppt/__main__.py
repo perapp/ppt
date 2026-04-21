@@ -23,12 +23,13 @@ from . import __version__
 
 
 SUPPORTED_ARCHES = {
-    "x86_64": ["x86_64", "amd64"],
+    "x86_64": ["x86_64", "amd64", "x64", "linux64"],
     "arm64": ["aarch64", "arm64"],
-    "armv7": ["armv7l", "armv7", "arm"],
+    # armv7/hard-float is commonly tagged as armhf / eabihf.
+    "armv7": ["armv7l", "armv7", "armhf", "eabihf", "gnueabihf"],
 }
 
-SUPPORTED_ARCHIVES = (".tar.gz", ".tgz", ".tar.xz", ".tbz", ".tar.bz2")
+SUPPORTED_ARCHIVES = (".tar.gz", ".tgz", ".tar.xz", ".tbz", ".tar.bz2", ".zip")
 
 
 class PptError(Exception):
@@ -682,6 +683,10 @@ def download_asset(cache_dir: Path, asset: dict) -> Path:
 def extract_archive(archive_path: Path, destination: Path) -> None:
     if not archive_path.name.endswith(SUPPORTED_ARCHIVES):
         raise PptError(f"unsupported archive format: {archive_path.name}")
+
+    if archive_path.name.endswith(".zip"):
+        extract_zip(archive_path, destination)
+        return
     with tempfile.TemporaryDirectory(prefix="ppt-extract-") as temp_dir_raw:
         temp_dir = Path(temp_dir_raw)
         with tarfile.open(archive_path, mode="r:*") as archive:
@@ -689,6 +694,27 @@ def extract_archive(archive_path: Path, destination: Path) -> None:
             if "filter" in inspect.signature(archive.extractall).parameters:
                 extract_kwargs["filter"] = "data"
             archive.extractall(temp_dir, **extract_kwargs)
+        for child in temp_dir.iterdir():
+            shutil.move(str(child), destination / child.name)
+
+
+def extract_zip(archive_path: Path, destination: Path) -> None:
+    # Zip archives are common for Go projects. Use a temp dir and enforce that
+    # extracted paths stay within it.
+    with tempfile.TemporaryDirectory(prefix="ppt-extract-") as temp_dir_raw:
+        temp_dir = Path(temp_dir_raw)
+        import zipfile
+
+        with zipfile.ZipFile(archive_path) as zf:
+            for member in zf.infolist():
+                name = member.filename
+                if not name or name.endswith("/"):
+                    continue
+                out_path = (temp_dir / name).resolve()
+                if not str(out_path).startswith(str(temp_dir.resolve()) + os.sep):
+                    raise PptError(f"refusing to extract zip path outside destination: {name}")
+            zf.extractall(temp_dir)
+
         for child in temp_dir.iterdir():
             shutil.move(str(child), destination / child.name)
 
@@ -903,7 +929,10 @@ def fetch_text(url: str) -> str:
 
 
 def parse_asset_names(html_text: str) -> list[str]:
-    matches = re.findall(r"([A-Za-z0-9._+-]+(?:\.tar\.gz|\.tgz|\.tar\.xz|\.tbz|\.tar\.bz2))", html_text)
+    matches = re.findall(
+        r"([A-Za-z0-9._+-]+(?:\.tar\.gz|\.tgz|\.tar\.xz|\.tbz|\.tar\.bz2|\.zip))",
+        html_text,
+    )
     return [html.unescape(match) for match in matches]
 
 
@@ -982,6 +1011,7 @@ def score_asset(name: str, platform_info: PlatformInfo) -> int | None:
     score += 18 if lowered.endswith(".tgz") else 0
     score += 16 if lowered.endswith(".tar.xz") else 0
     score += 14 if lowered.endswith(".tbz") or lowered.endswith(".tar.bz2") else 0
+    score += 12 if lowered.endswith(".zip") else 0
 
     if contains_target_arch:
         score += 25
