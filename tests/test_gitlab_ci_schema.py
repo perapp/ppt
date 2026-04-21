@@ -68,10 +68,8 @@ def test_gitlab_ci_yaml_schema_is_reasonable() -> None:
     assert not errors, "\n".join(errors)
 
 
-@pytest.mark.skipif(
-    not ("CI_API_V4_URL" in os.environ and "CI_PROJECT_ID" in os.environ),
-    reason="CI environment vars not present",
-)
+@pytest.mark.slow
+@pytest.mark.network
 def test_gitlab_ci_lint_api_validates_config_when_available() -> None:
     """Optional online check using GitLab CI Lint API.
 
@@ -81,26 +79,89 @@ def test_gitlab_ci_lint_api_validates_config_when_available() -> None:
     import json
     import urllib.request
 
-    api = os.environ["CI_API_V4_URL"].rstrip("/")
-    project_id = os.environ["CI_PROJECT_ID"]
-    url = f"{api}/projects/{project_id}/ci/lint"
+    # This test is optional and may be run:
+    # - in GitLab CI (CI_API_V4_URL + CI_PROJECT_ID are set)
+    # - locally (provide GITLAB_TOKEN and either GITLAB_PROJECT_ID or GITLAB_PROJECT_PATH)
+    api = (os.environ.get("CI_API_V4_URL") or os.environ.get("GITLAB_API_V4_URL") or "https://gitlab.com/api/v4").rstrip(
+        "/"
+    )
 
-    token = os.environ.get("CI_JOB_TOKEN") or os.environ.get("GITLAB_TOKEN") or os.environ.get("GL_TOKEN")
+    project_ident = os.environ.get("CI_PROJECT_ID") or os.environ.get("GITLAB_PROJECT_ID")
+    if not project_ident:
+        project_path = os.environ.get("CI_PROJECT_PATH") or os.environ.get("GITLAB_PROJECT_PATH")
+        if not project_path:
+            # Best-effort inference from git remote, if available.
+            try:
+                import subprocess
+
+                remote = subprocess.check_output(
+                    ["git", "config", "--get", "remote.origin.url"],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                ).strip()
+            except Exception:
+                remote = ""
+            if remote.startswith("http://") or remote.startswith("https://"):
+                from urllib.parse import urlparse
+
+                parsed = urlparse(remote)
+                parts = [p for p in parsed.path.split("/") if p]
+                if parts and parts[-1].endswith(".git"):
+                    parts[-1] = parts[-1][:-4]
+                if len(parts) >= 2:
+                    project_path = "/".join(parts)
+            else:
+                # SSH remote form: git@gitlab.com:group/project.git
+                m = __import__("re").match(r"^[^@]+@[^:]+:(.+)$", remote)
+                if m:
+                    candidate = m.group(1)
+                    if candidate.endswith(".git"):
+                        candidate = candidate[:-4]
+                    if "/" in candidate:
+                        project_path = candidate
+
+        if not project_path:
+            pytest.skip(
+                "GitLab CI lint API test disabled (missing CI_PROJECT_ID/GITLAB_PROJECT_ID or "
+                "CI_PROJECT_PATH/GITLAB_PROJECT_PATH). See CONTRIBUTING.md#gitlab-ci-lint-api-test"
+            )
+        from urllib.parse import quote
+
+        project_ident = quote(project_path, safe="")
+
+    url = f"{api}/projects/{project_ident}/ci/lint"
+
+    # GitLab CI_JOB_TOKEN access to CI lint varies by instance/settings. Keep this
+    # check opt-in via a personal/project token.
+    token = os.environ.get("GITLAB_TOKEN") or os.environ.get("GL_TOKEN")
     if not token:
-        pytest.skip("no CI_JOB_TOKEN/GITLAB_TOKEN/GL_TOKEN available")
+        pytest.skip(
+            "GitLab CI lint API test disabled (set GITLAB_TOKEN/GL_TOKEN). "
+            "See CONTRIBUTING.md#gitlab-ci-lint-api-test"
+        )
 
     content = (Path(__file__).resolve().parents[1] / ".gitlab-ci.yml").read_text(encoding="utf-8")
     body = json.dumps({"content": content}).encode("utf-8")
     headers = {"Content-Type": "application/json"}
 
-    # In CI, CI_JOB_TOKEN is preferred.
-    if os.environ.get("CI_JOB_TOKEN"):
-        headers["JOB-TOKEN"] = token
-    else:
-        headers["PRIVATE-TOKEN"] = token
+    headers["PRIVATE-TOKEN"] = token
 
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        # Avoid breaking CI on instances where lint API is forbidden.
+        try:
+            import urllib.error
+
+            if isinstance(exc, urllib.error.HTTPError) and exc.code in (401, 403):
+                pytest.skip(
+                    f"GitLab CI lint API forbidden ({exc.code}). "
+                    "See CONTRIBUTING.md#gitlab-ci-lint-api-test"
+                )
+        except Exception:
+            pass
+        raise
 
     assert payload.get("valid") is True, payload

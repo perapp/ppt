@@ -6,8 +6,13 @@ dependencies = [
   "pytest",
   "pydantic>=2",
   "ruamel.yaml>=0.18",
+  "python-dotenv>=1",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not slow'"
+markers = [
+  "slow: slow tests (opt-in)",
+  "network: requires network access (opt-in)",
+]

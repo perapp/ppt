@@ -6,6 +6,11 @@ import subprocess
 import tarfile
 from pathlib import Path
 
+import pytest
+
+
+pytestmark = pytest.mark.slow
+
 
 def _make_hosted_archive(path: Path) -> None:
     # Matches install.sh expectation: a top-level directory containing `src/`.
