@@ -6,6 +6,9 @@ RUN apt-get update -qq && apt-get install -y \
     adduser \
     bash \
     ca-certificates \
+    curl \
+    tar \
+    gzip \
     sudo \
     python3 
 
@@ -20,11 +23,9 @@ USER user
 ENV HOME=/home/user
 WORKDIR $HOME
 
-# Install a launcher that runs ppt from the mounted /workspace checkout.
-RUN mkdir -p /home/user/.local/ppt/bin
-COPY --chown=user:user dev/ppt-sandbox-launcher.sh /home/user/.local/ppt/bin/ppt
-RUN chmod 0755 /home/user/.local/ppt/bin/ppt
+# Use a locally-built release asset from the mounted workspace.
+ENV PPT_INSTALL_ASSET_URL=file:///workspace/dist/ppt-sandbox-linux.tar.gz
+ENV PPT_INSTALL_VERSION=sandbox
 
-ENV PATH=$PATH:$HOME/.local/ppt/bin
-
-CMD ["bash"]
+# Mimic README install command, then drop into an interactive shell.
+CMD ["bash", "-lc", "curl -fsSL file:///workspace/install.sh | bash -s -- --shell-config yes && exec bash -li"]

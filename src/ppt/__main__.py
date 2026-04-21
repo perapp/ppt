@@ -132,6 +132,25 @@ def build_parser() -> argparse.ArgumentParser:
     add_parser.add_argument("--prefix", dest="prefix")
     add_parser.set_defaults(handler=cmd_add)
 
+    install_parser = subparsers.add_parser("install", help="Install ppt into your home directory")
+    install_parser.add_argument("--repo", dest="repo", default=None, help="Repo URL to record in config")
+    install_parser.add_argument("--version", dest="version", default=None, help="Version to record in lock")
+    install_parser.add_argument("--asset-name", dest="asset_name", default=None)
+    install_parser.add_argument("--asset-url", dest="asset_url", default=None)
+    install_parser.add_argument(
+        "--from-dir",
+        dest="from_dir",
+        default=".",
+        help="Directory containing extracted release contents (bin/, src/)",
+    )
+    install_parser.add_argument(
+        "--shell-config",
+        choices=("ask", "yes", "no"),
+        default="ask",
+        help="Whether to update shell init (ask|yes|no)",
+    )
+    install_parser.set_defaults(handler=cmd_install)
+
     remove_parser = subparsers.add_parser("remove", help="Remove a package")
     remove_parser.add_argument("package")
     remove_parser.set_defaults(handler=cmd_remove)
@@ -457,6 +476,107 @@ def cmd_add(args: argparse.Namespace) -> int:
     result = install_package(paths, platform_info, config_entry, target_version, state)
     write_state(paths.state_file, state)
     print(result)
+    return 0
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    from_dir = Path(args.from_dir).expanduser().resolve()
+    if not (from_dir / "src" / "ppt" / "__main__.py").exists():
+        raise PptError(f"invalid --from-dir (missing src/ppt): {from_dir}")
+
+    # Install into standard layout.
+    paths = ensure_layout()
+    repo = args.repo or os.environ.get("PPT_REPO_URL") or "https://gitlab.com/perapp/ppt"
+    version = args.version or os.environ.get("PPT_INSTALL_VERSION") or __version__
+    asset_name = args.asset_name or os.environ.get("PPT_INSTALL_ASSET_NAME") or ""
+    asset_url = args.asset_url or os.environ.get("PPT_INSTALL_ASSET_URL") or ""
+
+    slug = package_slug(repo)
+    package_dir = paths.packages_dir / slug / version
+    if package_dir.exists():
+        shutil.rmtree(package_dir)
+    package_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy extracted release contents into package_dir.
+    for child in sorted(from_dir.iterdir()):
+        if child.name in {"src", "bin"}:
+            dest = package_dir / child.name
+            shutil.copytree(child, dest, dirs_exist_ok=True)
+
+    if not (package_dir / "src" / "ppt" / "__main__.py").exists():
+        raise PptError(f"installed package did not contain src/ppt: {package_dir}")
+
+    # Stable launcher that points at installed sources.
+    paths.bin_dir.mkdir(parents=True, exist_ok=True)
+    launcher = paths.bin_dir / "ppt"
+    launcher.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+export PPT_HOME=\"{ppt_home}\"
+export PPT_CONFIG_DIR=\"{ppt_config}\"
+export PYTHONPATH=\"{pkg_dir}/src${{PYTHONPATH:+:$PYTHONPATH}}\"
+exec python3 -m ppt \"$@\"
+""".format(
+            ppt_home=str(paths.home),
+            ppt_config=str(paths.config_dir),
+            pkg_dir=str(package_dir),
+        ),
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+
+    # Seed config + lock so ppt can manage itself.
+    config = [PackageConfig(repo=repo)]
+    write_package_file(paths.config_file, config)
+    write_lock_file(paths.lock_file, {repo: version})
+
+    state = {
+        repo: {
+            "status": "installed",
+            "resolved_version": version,
+            "installed_version": version,
+            "prefix": "",
+            "bin_links": [str(launcher)],
+            "package_dir": str(package_dir),
+            "asset_name": asset_name,
+            "message": "",
+            "updated_at": int(time.time()),
+        }
+    }
+    write_state(paths.state_file, state)
+    platform_info = detect_platform()
+    write_receipt(
+        package_dir,
+        repo,
+        version,
+        {"name": asset_name, "browser_download_url": asset_url},
+        platform_info,
+        [str(launcher)],
+    )
+
+    print(f"Installed ppt to {launcher}")
+
+    shell_config = args.shell_config
+    if shell_config == "yes":
+        try:
+            cmd_update_shell_config(argparse.Namespace(shell=None, rc_file=None, yes=True))
+        except PptError as exc:
+            print(f"warning: {exc}")
+        return 0
+
+    if shell_config == "ask" and sys.stdin.isatty():
+        try:
+            cmd_update_shell_config(argparse.Namespace(shell=None, rc_file=None, yes=False))
+        except PptError as exc:
+            # Shell init update is optional.
+            print(f"warning: {exc}")
+        return 0
+
+    # shell_config == "no" or non-interactive ask.
+    print(f"If needed, add {paths.bin_dir} to PATH:")
+    print(f"  export PATH=\"{paths.bin_dir}:$PATH\"")
+    print("To enable completion and PATH updates on shell startup:")
+    print(f"  {launcher} update-shell-config")
     return 0
 
 

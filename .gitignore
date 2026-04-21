@@ -4,3 +4,4 @@ __pycache__/
 .tmp/
 .env
 dev/.image.sandbox
+dist/

@@ -38,12 +38,19 @@ uv run pytest tests/integration -m container
 For a quick, ephemeral Ubuntu sandbox with ppt installed, run:
 
 ```bash
+make sandbox
+```
+
+You can also use the convenience wrapper:
+
+```bash
 ./sandbox.sh
 ```
 
 Notes:
- - The sandbox image is rebuilt automatically when `dev/Containerfile.sandbox` changes.
- - To force rebuild, use `./sandbox.sh --rebuild`
+ - The sandbox starts from a locally-built release asset in `dist/`.
+ - To rebuild just the image: `make sandbox-image`.
+ - To rebuild just the release asset: `make release-assets`.
 
 ## CI Config Validation
 
