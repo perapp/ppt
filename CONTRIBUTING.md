@@ -33,6 +33,18 @@ Run container integration tests:
 uv run pytest tests/integration -m container
 ```
 
+## Dev Sandbox Container
+
+For a quick, ephemeral Ubuntu sandbox with ppt installed, run:
+
+```bash
+./sandbox.sh
+```
+
+Notes:
+ - The sandbox image is rebuilt automatically when `dev/Containerfile.sandbox` changes.
+ - To force rebuild, use `./sandbox.sh --rebuild`
+
 ## CI Config Validation
 
 We validate YAML syntax for all `*.yml` / `*.yaml` files in the repository and do a lightweight structural check of `.gitlab-ci.yml`.
