@@ -16,6 +16,8 @@ test:integration:
   script:
     - python3 -m pip install --upgrade pip
     - python3 -m pip install uv
+    - apt-get update -qq
+    - apt-get install -y -qq tar curl ca-certificates >/dev/null
     - uv run pytest tests/integration -m "not container and not gitlab_api"
 
 test:integration:gitlab_api:
@@ -60,6 +62,7 @@ build_release_assets:
     expire_in: never
     paths:
       - dist/*.tar.gz
+      - dist/install.sh
 
 create_gitlab_release:
   stage: release
@@ -76,4 +79,5 @@ create_gitlab_release:
         --name "ppt $VERSION" \
         --tag-name "$VERSION" \
         --description "Release $VERSION" \
-        --assets-link "{\"name\":\"ppt-${VERSION}-linux.tar.gz\",\"url\":\"$base_url/ppt-${VERSION}-linux.tar.gz?job=build_release_assets\"}"
+        --assets-link "{\"name\":\"install.sh\",\"url\":\"$base_url/install.sh?job=build_release_assets\",\"filepath\":\"/install.sh\"}" \
+        --assets-link "{\"name\":\"ppt-linux.tar.gz\",\"url\":\"$base_url/ppt-${VERSION}-linux.tar.gz?job=build_release_assets\",\"filepath\":\"/ppt-linux.tar.gz\"}"

@@ -5,3 +5,4 @@ __pycache__/
 .env
 dev/.image.sandbox
 dist/
+dev/example-packages/asset-lists

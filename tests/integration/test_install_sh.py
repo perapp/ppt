@@ -45,14 +45,31 @@ def test_install_script_bootstraps_self_managed_ppt(tmp_path: Path) -> None:
     repo_root = next(p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists())
 
     version = "v9.9.9"
-    asset_name = f"ppt-{version}-linux.tar.gz"
-    asset_url = f"https://example.invalid/{asset_name}"
-    api_url = "https://example.invalid/api/v4"
-    project_id = "perapp%2Fppt"
-    latest_release_url = f"{api_url}/projects/{project_id}/releases/permalink/latest"
+    asset_url = "https://example.invalid/ppt-linux.tar.gz"
 
-    tarball = tmp_path / asset_name
+    tarball = tmp_path / "ppt-linux.tar.gz"
     _make_ppt_release_asset(repo_root, tarball)
+
+    # Render a version-pinned installer (what we ship in releases).
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+    installer = dist_dir / "install.sh"
+    subprocess.run(
+        [
+            "python3",
+            str(repo_root / "dev" / "render_install_sh.py"),
+            "--template",
+            str(repo_root / "install.sh.template"),
+            "--out",
+            str(installer),
+            "--repo-url",
+            "https://gitlab.com/perapp/ppt",
+            "--version",
+            version,
+        ],
+        check=True,
+        cwd=repo_root,
+    )
 
     # Stub `curl` to avoid network access.
     bin_dir = tmp_path / "bin"
@@ -74,21 +91,6 @@ while [ "$#" -gt 0 ]; do
       shift ;;
   esac
 done
-
-if [ "$url" = "$PPT_TEST_RELEASE_URL" ]; then
-  cat <<EOF
-{"tag_name":"$PPT_TEST_TAG","assets":{"links":[{"name":"$PPT_TEST_ASSET_NAME","url":"$PPT_TEST_ASSET_URL"}]}}
-EOF
-  exit 0
-fi
-
-if [[ "$url" == */releases/permalink/latest ]]; then
-  # Be tolerant of API base variations.
-  cat <<EOF
-{"tag_name":"$PPT_TEST_TAG","assets":{"links":[{"name":"$PPT_TEST_ASSET_NAME","url":"$PPT_TEST_ASSET_URL"}]}}
-EOF
-  exit 0
-fi
 
 if [ "$url" = "$PPT_TEST_ASSET_URL" ]; then
   if [ -n "$out" ]; then
@@ -113,18 +115,14 @@ exit 2
         {
             "PPT_HOME": str(ppt_home),
             "PPT_CONFIG_DIR": str(ppt_config),
-            "PPT_REPO_URL": "https://gitlab.com/perapp/ppt",
-            "GITLAB_API_V4_URL": api_url,
             "PATH": f"{bin_dir}:{env.get('PATH', '')}",
-            "PPT_TEST_RELEASE_URL": latest_release_url,
-            "PPT_TEST_TAG": version,
-            "PPT_TEST_ASSET_NAME": asset_name,
             "PPT_TEST_ASSET_URL": asset_url,
             "PPT_TEST_TARBALL": str(tarball),
+            "PPT_INSTALL_ASSET_URL": asset_url,
         }
     )
 
-    subprocess.run(["bash", str(repo_root / "install.sh")], cwd=tmp_path, env=env, check=True)
+    subprocess.run(["bash", str(installer), "--shell-config", "no"], cwd=tmp_path, env=env, check=True)
 
     launcher = ppt_home / "bin" / "ppt"
     assert launcher.exists()

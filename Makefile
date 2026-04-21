@@ -8,6 +8,10 @@ SANDBOX_VOLUME := $(CURDIR):/workspace$(if $(filter podman,$(RUNTIME)),:Z,)
 DIST_DIR := dist
 RELEASE_TARBALL := $(DIST_DIR)/ppt-$(VERSION)-linux.tar.gz
 SANDBOX_TARBALL := $(DIST_DIR)/ppt-sandbox-linux.tar.gz
+INSTALL_SH := $(DIST_DIR)/install.sh
+
+INSTALL_TEMPLATE := install.sh.template
+REPO_URL ?= $(shell if [ -n "$$CI_PROJECT_URL" ]; then echo "$$CI_PROJECT_URL"; else echo "https://gitlab.com/perapp/ppt"; fi)
 
 help:
 	@printf '%s\n' \
@@ -40,10 +44,14 @@ $(RELEASE_TARBALL): | $(DIST_DIR)
 	chmod 0755 "$$tmp/bin/ppt"; \
 	tar -C "$$tmp" -czf "$(RELEASE_TARBALL)" bin src
 
-release-assets: $(RELEASE_TARBALL)
+$(INSTALL_SH): $(INSTALL_TEMPLATE) dev/render_install_sh.py | $(DIST_DIR)
+	@python3 dev/render_install_sh.py --template "$(INSTALL_TEMPLATE)" --out "$(INSTALL_SH)" --repo-url "$(REPO_URL)" --version "$(VERSION)"
+
+release-assets: $(RELEASE_TARBALL) $(INSTALL_SH)
 	@cp -f "$(RELEASE_TARBALL)" "$(SANDBOX_TARBALL)"
 	@printf 'Built %s\n' "$(RELEASE_TARBALL)"
 	@printf 'Updated %s\n' "$(SANDBOX_TARBALL)"
+	@printf 'Built %s\n' "$(INSTALL_SH)"
 
 sandbox-image:
 	@if [ "$(RUNTIME)" = "none" ]; then \

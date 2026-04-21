@@ -25,7 +25,6 @@ WORKDIR $HOME
 
 # Use a locally-built release asset from the mounted workspace.
 ENV PPT_INSTALL_ASSET_URL=file:///workspace/dist/ppt-sandbox-linux.tar.gz
-ENV PPT_INSTALL_VERSION=sandbox
 
 # Mimic README install command, then drop into an interactive shell.
-CMD ["bash", "-lc", "curl -fsSL file:///workspace/install.sh | bash -s -- --shell-config yes && exec bash -li"]
+CMD ["bash", "-lc", "curl -fsSL file:///workspace/dist/install.sh | bash -s -- --shell-config yes && exec bash -li"]

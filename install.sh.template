@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# This file is a template.
+# The released installer is generated as dist/install.sh.
+
+PPT_REPO_URL=${PPT_REPO_URL:-"{{PPT_REPO_URL}}"}
+PPT_VERSION="{{PPT_VERSION}}"
+
+PPT_HOME=${PPT_HOME:-$HOME/.local/ppt}
+PPT_CONFIG_DIR=${PPT_CONFIG_DIR:-$HOME/.config/ppt}
+
+if ! command -v python3 >/dev/null 2>&1; then
+  printf 'python3 is required to install ppt\n' >&2
+  exit 1
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+  printf 'curl is required to install ppt\n' >&2
+  exit 1
+fi
+
+if ! command -v tar >/dev/null 2>&1; then
+  printf 'tar is required to install ppt\n' >&2
+  exit 1
+fi
+
+shell_config="${PPT_INSTALL_SHELL_CONFIG:-}"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --shell-config)
+      shell_config="${2:-}"; shift 2 ;;
+    *)
+      printf 'unknown argument: %s\n' "$1" >&2
+      exit 2 ;;
+  esac
+done
+
+if [ -z "$shell_config" ]; then
+  if [ -t 0 ]; then
+    shell_config=ask
+  else
+    shell_config=no
+  fi
+fi
+
+case "$shell_config" in
+  ask|yes|no) ;;
+  *)
+    printf 'invalid --shell-config value: %s (expected ask|yes|no)\n' "$shell_config" >&2
+    exit 2
+    ;;
+esac
+
+# Allow local/sandbox testing via env override.
+asset_url=${PPT_INSTALL_ASSET_URL:-"$PPT_REPO_URL/-/releases/$PPT_VERSION/downloads/ppt-linux.tar.gz"}
+
+tmp_dir=$(mktemp -d)
+cleanup() { rm -rf "$tmp_dir"; }
+trap cleanup EXIT
+
+archive_path="$tmp_dir/ppt-linux.tar.gz"
+curl -fsSL "$asset_url" -o "$archive_path"
+
+extract_dir="$tmp_dir/extract"
+mkdir -p "$extract_dir"
+tar -xzf "$archive_path" -C "$extract_dir"
+
+if [ ! -f "$extract_dir/src/ppt/__main__.py" ]; then
+  printf 'downloaded release asset did not contain src/ppt\n' >&2
+  exit 1
+fi
+
+PPT_HOME="$PPT_HOME" \
+PPT_CONFIG_DIR="$PPT_CONFIG_DIR" \
+PPT_REPO_URL="$PPT_REPO_URL" \
+PYTHONPATH="$extract_dir/src${PYTHONPATH:+:$PYTHONPATH}" \
+python3 -m ppt install \
+  --repo "$PPT_REPO_URL" \
+  --version "$PPT_VERSION" \
+  --asset-name "ppt-linux.tar.gz" \
+  --asset-url "$asset_url" \
+  --from-dir "$extract_dir" \
+  --shell-config "$shell_config"

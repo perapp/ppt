@@ -35,7 +35,7 @@ across different Linux systems.
 ## Install
 
 ```bash
-curl -fsSL https://gitlab.com/perapp/ppt/-/raw/main/install.sh | bash
+curl -fsSL https://gitlab.com/perapp/ppt/-/releases/permalink/latest/downloads/install.sh | bash
 ```
 
 If needed, add `ppt` to your `PATH`:
