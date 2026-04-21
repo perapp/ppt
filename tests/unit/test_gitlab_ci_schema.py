@@ -17,7 +17,8 @@ def _repo_root() -> Path:
 class Rule(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    if_: str = Field(alias="if")
+    # GitLab allows rules entries that omit `if` (e.g. `- when: manual`).
+    if_: str | None = Field(default=None, alias="if")
 
 
 class Job(BaseModel):
