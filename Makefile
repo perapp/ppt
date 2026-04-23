@@ -1,4 +1,4 @@
-.PHONY: help dist release-assets sandbox-image sandbox clean
+.PHONY: help dist release-assets install uninstall sandbox-image sandbox clean
 
 # We rely on bash features (notably `set -o pipefail`).
 SHELL := bash
@@ -14,6 +14,15 @@ SANDBOX_VOLUME := $(CURDIR):/workspace$(if $(filter podman,$(RUNTIME)),:Z,)
 DIST_DIR := dist
 DIST_DIR_STAMP := $(DIST_DIR)/.dir.stamp
 
+# Standard install variables.
+DESTDIR ?=
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+LIBDIR ?= $(PREFIX)/lib
+
+# Where the bundled runtime (python/ + venv/ + bin/) is installed.
+PPT_INSTALL_DIR ?= $(LIBDIR)/ppt
+
 # python-build-standalone pin used for release assets.
 PPT_PBS_TAG ?= 20260414
 PPT_PBS_CPYTHON ?= 3.12.13
@@ -26,6 +35,9 @@ PPT_DIST_USE_CONTAINER ?= 0
 PPT_DIST_TARGETS ?= $(HOST_PLATFORM)
 
 DIST_TARBALLS := $(foreach t,$(PPT_DIST_TARGETS),$(DIST_DIR)/ppt-$(VERSION)-$(t).tar.gz)
+
+# System install uses the host-native tarball contents.
+INSTALL_TARBALL := $(DIST_DIR)/ppt-$(VERSION)-$(HOST_PLATFORM).tar.gz
 
 # Local dev defaults.
 RELEASE_TARBALL := $(DIST_DIR)/ppt-$(VERSION)-x86_64-unknown-linux-gnu.tar.gz
@@ -40,6 +52,8 @@ help:
 	  'Targets:' \
 	  '  dist            Build dist tarballs + install.sh' \
 	  '  release-assets   Build default local Linux tarball + install.sh' \
+	  '  install         Install ppt to $(PREFIX) (respects DESTDIR)' \
+	  '  uninstall       Remove files installed by `make install`' \
 	  '  sandbox          Build assets and start interactive sandbox' \
 	  '  clean            Remove dist and sandbox image stamp'
 
@@ -66,6 +80,33 @@ $(INSTALL_SH): $(INSTALL_TEMPLATE) dev/render_install_sh.py | $(DIST_DIR_STAMP)
 dist: $(DIST_TARBALLS) $(INSTALL_SH)
 	@printf 'Built %s\n' "$(DIST_DIR)"/*.tar.gz
 	@printf 'Built %s\n' "$(INSTALL_SH)"
+
+install: $(INSTALL_TARBALL)
+	@set -euo pipefail; \
+	  dest='$(DESTDIR)$(PPT_INSTALL_DIR)'; \
+	  bindir='$(DESTDIR)$(BINDIR)'; \
+	  case "$$dest" in ''|'/') printf '%s\n' 'error: refusing to install into empty or / (check PPT_INSTALL_DIR/DESTDIR)' >&2; exit 2;; esac; \
+	  tmp=$$(mktemp -d); \
+	  trap 'rm -rf "$$tmp"' EXIT; \
+	  mkdir -p "$$bindir"; \
+	  tar -xzf "$(INSTALL_TARBALL)" -C "$$tmp"; \
+	  rm -rf "$$dest"; \
+	  mkdir -p "$$dest"; \
+	  cp -a "$$tmp/"* "$$dest/"; \
+	  link="$$bindir/ppt"; \
+	  target='$(PPT_INSTALL_DIR)/bin/ppt'; \
+	  rel=$$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], os.path.dirname(sys.argv[2])))' "$$target" '$(BINDIR)/ppt'); \
+	  ln -sfn "$$rel" "$$link"; \
+	  printf 'Installed %s\n' "$$link"
+
+uninstall:
+	@set -euo pipefail; \
+	  link='$(DESTDIR)$(BINDIR)/ppt'; \
+	  dest='$(DESTDIR)$(PPT_INSTALL_DIR)'; \
+	  if [ -L "$$link" ] || [ -f "$$link" ]; then rm -f "$$link"; fi; \
+	  case "$$dest" in ''|'/') printf '%s\n' 'error: refusing to uninstall from empty or / (check PPT_INSTALL_DIR/DESTDIR)' >&2; exit 2;; esac; \
+	  rm -rf "$$dest"; \
+	  printf 'Removed %s and %s\n' "$$link" "$$dest"
 
 release-assets: $(RELEASE_TARBALL) $(INSTALL_SH)
 	@cp -f "$(RELEASE_TARBALL)" "$(SANDBOX_TARBALL)"
