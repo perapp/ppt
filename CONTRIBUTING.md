@@ -64,6 +64,12 @@ Prerequisites for building locally:
 - A C toolchain (`cc`, `ar`)
 - For musl targets: `musl-gcc` (e.g. Debian package `musl-tools`)
 
+Notes:
+- On Linux targets, `make dist` uses a containerized build by default to avoid glibc version mismatches.
+  This requires `podman` or `docker`.
+- You can prebuild the container image with `make dist-image`.
+- To force a local (non-container) build, set `PPT_DIST_USE_CONTAINER=0`.
+
 ## CI Config Validation
 
 We validate YAML syntax for all `*.yml` / `*.yaml` files in the repository and do a lightweight structural check of `.gitlab-ci.yml`.
