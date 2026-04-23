@@ -84,6 +84,19 @@ class PlatformInfo:
         return f"{self.arch}-{self.vendor}-{self.os_name}"
 
 
+# Platforms to show in `ppt info --all-platforms`.
+INFO_PLATFORMS = [
+    PlatformInfo(os_name="linux", vendor="unknown", arch="x86_64", env="gnu"),
+    PlatformInfo(os_name="linux", vendor="unknown", arch="x86_64", env="musl"),
+    PlatformInfo(os_name="linux", vendor="unknown", arch="aarch64", env="gnu"),
+    PlatformInfo(os_name="linux", vendor="unknown", arch="aarch64", env="musl"),
+    PlatformInfo(os_name="linux", vendor="unknown", arch="armv7", env="gnueabihf"),
+    PlatformInfo(os_name="linux", vendor="unknown", arch="armv7", env="musleabihf"),
+    PlatformInfo(os_name="darwin", vendor="apple", arch="x86_64", env=None),
+    PlatformInfo(os_name="darwin", vendor="apple", arch="aarch64", env=None),
+]
+
+
 @dataclass
 class AppPaths:
     home: Path
@@ -240,6 +253,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     info_parser = subparsers.add_parser("info", help="Show package details")
     info_parser.add_argument("package")
+    info_parser.add_argument(
+        "--all-platforms",
+        action="store_true",
+        help="Show selected asset for the locked version across platforms",
+    )
     info_parser.set_defaults(handler=cmd_info)
 
     platform_parser = subparsers.add_parser("platform", help="Print current platform identifier")
@@ -737,8 +755,12 @@ def cmd_sync(args: argparse.Namespace) -> int:
         if target_version is None:
             release = fetch_release(entry.repo, None)
             target_version = release["tag_name"]
+
+        # Keep config self-contained: always record locked.
+        if entry.locked != target_version:
             entry.locked = target_version
             changed_config = True
+
         message = install_package(paths, platform_info, entry, target_version, state)
         if message:
             messages.append(message)
@@ -949,9 +971,9 @@ def cmd_info(args: argparse.Namespace) -> int:
     print(f"available: {available}")
     print(f"latest: {latest}")
     print(f"installed: {repo_state.get('installed_version', '-')}")
-    asset_name = (repo_state.get("asset_name") or "").strip()
-    if asset_name:
-        print(f"asset: {asset_name}")
+
+    installed_asset = (repo_state.get("asset_name") or "-").strip() or "-"
+    print(f"installed asset: {installed_asset}")
     print(f"status: {repo_state.get('status', 'configured')}")
     print(f"prefix: {entry.prefix if entry.prefix is not None else ''}")
     if repo_state.get("message"):
@@ -960,6 +982,19 @@ def cmd_info(args: argparse.Namespace) -> int:
         print("bin links:")
         for item in repo_state["bin_links"]:
             print(f"  {item}")
+
+    if args.all_platforms:
+        locked_version = (entry.locked or "").strip()
+        if not locked_version:
+            raise PptError(f"missing locked version for {repo}; run `ppt sync`")
+
+        release = fetch_release(repo, locked_version)
+        rows: list[list[str]] = []
+        for platform_info in INFO_PLATFORMS:
+            asset = select_asset(repo, release, platform_info)
+            rows.append([platform_info.key, asset["name"] if asset else "-"])
+        print("\nlocked assets:")
+        _print_table(["PLATFORM", "ASSET"], rows)
     return 0
 
 

@@ -217,6 +217,21 @@ class TestCliFlows(CliTestCase):
         self.assertIn("available: v2.0.0", stdout)
         self.assertIn("latest: v2.0.0", stdout)
 
+    def test_info_all_platforms_shows_asset_matrix_for_locked_version(self) -> None:
+        repo = "https://github.com/neovim/neovim"
+        self.releases.add_release(repo, "v1.0.0", {"nvim": "#!/bin/sh\necho nvim v1\n"})
+        self.run_ppt("add", repo)
+
+        code, stdout, stderr = self.run_ppt("info", "neovim", "--all-platforms")
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("locked assets:", stdout)
+        self.assertIn("PLATFORM", stdout)
+        self.assertIn("ASSET", stdout)
+        self.assertIn("x86_64-unknown-linux-gnu", stdout)
+        # At least one platform should match the linux asset in the fake store.
+        self.assertIn("neovim-v1.0.0-linux-x86_64.tar.gz", stdout)
+
     def test_list_default_only_shows_installed(self) -> None:
         (self.config / "packages.toml").write_text(
             '# Managed by ppt\n\n[[package]]\nrepo = "https://github.com/neovim/neovim"\n',
