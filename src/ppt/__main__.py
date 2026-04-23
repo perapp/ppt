@@ -632,8 +632,10 @@ def cmd_install(args: argparse.Namespace) -> int:
     package_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy extracted release contents into package_dir.
+    # - Source asset layout: src/ + bin/
+    # - Bundled runtime layout: python/ + venv/ + bin/
     for child in sorted(from_dir.iterdir()):
-        if child.name in {"src", "bin"}:
+        if child.name in {"src", "bin", "python", "venv"}:
             dest = package_dir / child.name
             shutil.copytree(child, dest, dirs_exist_ok=True)
 

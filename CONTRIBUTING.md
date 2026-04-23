@@ -58,17 +58,17 @@ Release assets are produced as tarballs containing `bin/ppt`.
 
 `make dist` builds tarballs for `PPT_DIST_TARGETS` (defaults to the current host platform).
 
-This uses PyOxidizer to build a standalone `ppt` executable that does not require a system Python.
+This uses `python-build-standalone` to bundle a Python runtime plus a dependency directory (under `venv/`).
+
 Prerequisites for building locally:
-- Rust toolchain (`cargo`)
-- A C toolchain (`cc`, `ar`)
-- For musl targets: `musl-gcc` (e.g. Debian package `musl-tools`)
+- `python3` (for the build script)
+- `curl`, `tar`, `gzip`
 
 Notes:
-- On Linux targets, `make dist` uses a containerized build by default to avoid glibc version mismatches.
-  This requires `podman` or `docker`.
-- You can prebuild the container image with `make dist-image`.
-- To force a local (non-container) build, set `PPT_DIST_USE_CONTAINER=0`.
+- `make dist` runs on the host and downloads the pinned `python-build-standalone` runtime.
+
+Known limitations:
+- `python-build-standalone` does not currently publish `armv7-unknown-linux-musleabihf` install-only artifacts.
 
 ## CI Config Validation
 

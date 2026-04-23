@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import subprocess
 import tarfile
@@ -16,29 +17,59 @@ def _make_ppt_release_asset(repo_root: Path, out_path: Path) -> None:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         (tmp / "bin").mkdir(parents=True)
-        (tmp / "src").mkdir(parents=True)
+        (tmp / "python" / "bin").mkdir(parents=True)
+        (tmp / "venv" / "site-packages").mkdir(parents=True)
+
+        # Stub "bundled" python (we don't want to ship a real runtime in tests).
+        # The real release asset uses python-build-standalone.
+        py = tmp / "python" / "bin" / "python3"
+        py.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "$@"
+""",
+            encoding="utf-8",
+        )
+        py.chmod(0o755)
 
         # Launcher matches what we publish in GitLab release assets.
         launcher = tmp / "bin" / "ppt"
         launcher.write_text(
             """#!/usr/bin/env bash
 set -euo pipefail
+
+# Resolve symlinks (the stable launcher installed by `ppt install` is a symlink).
 SCRIPT_PATH="$0"
 if command -v readlink >/dev/null 2>&1; then
-  SCRIPT_PATH=$(readlink -f -- "$0" 2>/dev/null || printf '%s' "$0")
+  while [ -L "$SCRIPT_PATH" ]; do
+    base_dir=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")" && pwd)
+    link=$(readlink "$SCRIPT_PATH" || true)
+    if [ -z "$link" ]; then
+      break
+    fi
+    case "$link" in
+      /*) SCRIPT_PATH="$link" ;;
+      *) SCRIPT_PATH="$base_dir/$link" ;;
+    esac
+  done
 fi
-APP_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")/.." && pwd)
-export PYTHONPATH="$APP_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
-exec python3 -m ppt "$@"
+
+APP_DIR=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")/.." && pwd)
+export PYTHONPATH="$APP_DIR/venv/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+exec "$APP_DIR/python/bin/python3" -m ppt "$@"
 """,
             encoding="utf-8",
         )
         launcher.chmod(0o755)
 
-        # Include the real project sources.
+        # Bundle ppt sources into "venv/site-packages".
+        shutil.copytree(repo_root / "src" / "ppt", tmp / "venv" / "site-packages" / "ppt")
+
+        # Create tarball.
         with tarfile.open(out_path, "w:gz") as tf:
             tf.add(tmp / "bin", arcname="bin")
-            tf.add(repo_root / "src" / "ppt", arcname="src/ppt")
+            tf.add(tmp / "python", arcname="python")
+            tf.add(tmp / "venv", arcname="venv")
 
 
 def test_install_script_bootstraps_self_managed_ppt(tmp_path: Path) -> None:
@@ -126,7 +157,6 @@ exit 2
 
     launcher = ppt_home / "bin" / "ppt"
     assert launcher.exists()
-    assert not launcher.is_symlink()
     assert launcher.stat().st_mode & stat.S_IXUSR
 
     packages_toml = (ppt_config / "packages.toml").read_text(encoding="utf-8")

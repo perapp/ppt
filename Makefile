@@ -1,4 +1,4 @@
-.PHONY: help dist dist-image release-assets sandbox-image sandbox clean
+.PHONY: help dist release-assets sandbox-image sandbox clean
 
 # We rely on bash features (notably `set -o pipefail`).
 SHELL := bash
@@ -13,15 +13,13 @@ SANDBOX_VOLUME := $(CURDIR):/workspace$(if $(filter podman,$(RUNTIME)),:Z,)
 
 DIST_DIR := dist
 DIST_DIR_STAMP := $(DIST_DIR)/.dir.stamp
-PYOXIDIZER ?= pyoxidizer
 
-# Use a containerized build for Linux targets by default. This avoids producing
-# binaries that depend on a newer glibc than the sandbox/release environments.
-PPT_DIST_USE_CONTAINER ?= $(if $(filter none,$(RUNTIME)),0,1)
-PPT_DIST_CONTAINER_IMAGE ?= ppt:dist
+# python-build-standalone pin used for release assets.
+PPT_PBS_TAG ?= 20260414
+PPT_PBS_CPYTHON ?= 3.12.13
+PPT_PBS_FLAVOR ?= install_only_stripped
 
-# Cache volume for containerized dist builds.
-PPT_DIST_CACHE_VOLUME ?= ppt-dist-cache
+PPT_DIST_USE_CONTAINER ?= 0
 
 # Default to building only for the current host platform.
 # Override with e.g. `make dist PPT_DIST_TARGETS="x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu"`.
@@ -41,17 +39,9 @@ help:
 	@printf '%s\n' \
 	  'Targets:' \
 	  '  dist            Build dist tarballs + install.sh' \
-	  '  dist-image      Build local container image used for dist (optional)' \
 	  '  release-assets   Build default local Linux tarball + install.sh' \
 	  '  sandbox          Build assets and start interactive sandbox' \
 	  '  clean            Remove dist and sandbox image stamp'
-
-dist-image:
-	@if [ "$(RUNTIME)" = "none" ]; then \
-	  printf '%s\n' 'error: need podman or docker for dist-image' >&2; \
-	  exit 2; \
-	fi
-	@$(RUNTIME) build -f dev/Containerfile.dist -t $(PPT_DIST_CONTAINER_IMAGE) .
 
 $(DIST_DIR_STAMP):
 	@mkdir -p "$(DIST_DIR)"
@@ -60,36 +50,13 @@ $(DIST_DIR_STAMP):
 $(DIST_DIR)/ppt-$(VERSION)-%.tar.gz: | $(DIST_DIR_STAMP)
 	@set -euo pipefail; \
 	target="$*"; \
-	use_container="$(PPT_DIST_USE_CONTAINER)"; \
-	case "$$target" in \
-	  *-unknown-linux-*) ;; \
-	  *) use_container=0 ;; \
-	esac; \
-	if [ "$$use_container" = "1" ]; then \
-	  if [ "$(RUNTIME)" = "none" ]; then \
-	    printf '%s\n' 'error: container runtime not available (need podman or docker)' >&2; \
-	    exit 2; \
-	  fi; \
-	  $(MAKE) --no-print-directory dist-image; \
-	  $(RUNTIME) volume create "$(PPT_DIST_CACHE_VOLUME)" >/dev/null 2>&1 || true; \
-	  $(RUNTIME) run --rm \
-	    -v "$(PPT_DIST_CACHE_VOLUME):/cache" \
-	    -v "$(CURDIR):/workspace$(if $(filter podman,$(RUNTIME)),:Z,)" \
-	    -w /workspace \
-	    -e "HOME=/cache/home" \
-	    -e "CARGO_HOME=/cache/cargo" \
-	    -e "RUSTUP_HOME=/cache/rustup" \
-	    "$(PPT_DIST_CONTAINER_IMAGE)" \
-	    bash -c "set -euo pipefail; make --no-print-directory PPT_DIST_USE_CONTAINER=0 VERSION='$(VERSION)' PYOXIDIZER=/usr/local/cargo/bin/pyoxidizer '$@'"; \
-	  exit 0; \
-	fi; \
-	$(PYOXIDIZER) build --release --target-triple "$$target"; \
-	install_dir="build/$$target/release/install"; \
-	if [ ! -x "$$install_dir/bin/ppt" ]; then \
-	  printf '%s\n' "error: expected $$install_dir/bin/ppt from pyoxidizer" >&2; \
-	  exit 2; \
-	fi; \
-	tar -C "$$install_dir" -czf "$@" bin
+	python3 dev/build_dist.py \
+	  --target "$$target" \
+	  --version "$(VERSION)" \
+	  --pbs-tag "$(PPT_PBS_TAG)" \
+	  --cpython "$(PPT_PBS_CPYTHON)" \
+	  --flavor "$(PPT_PBS_FLAVOR)" \
+	  --out "$@"
 
 
 $(INSTALL_SH): $(INSTALL_TEMPLATE) dev/render_install_sh.py | $(DIST_DIR_STAMP)
