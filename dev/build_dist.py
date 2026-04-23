@@ -131,13 +131,12 @@ def main() -> int:
         if not python_exe.exists():
             raise SystemExit(f"error: expected python/bin/python3 in python-build-standalone archive: {archive_path}")
 
-        # Ensure pip exists for dependency installation.
-        run([str(python_exe), "-m", "ensurepip", "--upgrade"])
-        run([str(python_exe), "-m", "pip", "install", "--upgrade", "pip"])
-
         site_dir = stage / "venv" / "site-packages"
         site_dir.mkdir(parents=True, exist_ok=True)
 
+        # Install runtime dependencies using the build host Python.
+        # We intentionally do not execute the bundled Python here so that we can
+        # build tarballs for non-native targets on a single runner.
         deps = read_runtime_dependencies(pyproject)
         if deps:
             env = os.environ.copy()
@@ -148,7 +147,7 @@ def main() -> int:
                     "PYTHONNOUSERSITE": "1",
                 }
             )
-            run([str(python_exe), "-m", "pip", "install", "--target", str(site_dir), *deps], env=env)
+            run([sys.executable, "-m", "pip", "install", "--target", str(site_dir), *deps], env=env)
 
         # Bundle ppt sources directly (the project is not currently wheel-installable).
         shutil.copytree(src_dir, site_dir / "ppt", dirs_exist_ok=True)

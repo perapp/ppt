@@ -63,6 +63,7 @@ build_dist:x86_64-unknown-linux-gnu:
   script:
     - apt-get update -qq
     - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null
+    - python3 -m pip install --upgrade pip
     - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
     - make dist VERSION="$VERSION" PPT_DIST_TARGETS="x86_64-unknown-linux-gnu"
   artifacts:
@@ -86,6 +87,7 @@ build_dist:x86_64-unknown-linux-musl:
   script:
     - apt-get update -qq
     - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null
+    - python3 -m pip install --upgrade pip
     - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
     - make dist VERSION="$VERSION" PPT_DIST_TARGETS="x86_64-unknown-linux-musl"
   artifacts:
@@ -96,8 +98,7 @@ build_dist:x86_64-unknown-linux-musl:
 
 build_dist:aarch64-unknown-linux-gnu:
   stage: release
-  tags: [aarch64]
-  allow_failure: true
+  image: python:3.12-slim
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
       when: manual
@@ -108,8 +109,9 @@ build_dist:aarch64-unknown-linux-gnu:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
-    - apt-get update -qq || true
-    - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null 2>&1 || true
+    - apt-get update -qq
+    - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null
+    - python3 -m pip install --upgrade pip
     - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
     - make dist VERSION="$VERSION" PPT_DIST_TARGETS="aarch64-unknown-linux-gnu"
   artifacts:
@@ -120,8 +122,7 @@ build_dist:aarch64-unknown-linux-gnu:
 
 build_dist:aarch64-unknown-linux-musl:
   stage: release
-  tags: [aarch64]
-  allow_failure: true
+  image: python:3.12-slim
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
       when: manual
@@ -132,8 +133,9 @@ build_dist:aarch64-unknown-linux-musl:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
-    - apt-get update -qq || true
-    - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null 2>&1 || true
+    - apt-get update -qq
+    - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null
+    - python3 -m pip install --upgrade pip
     - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
     - make dist VERSION="$VERSION" PPT_DIST_TARGETS="aarch64-unknown-linux-musl"
   artifacts:
@@ -144,8 +146,7 @@ build_dist:aarch64-unknown-linux-musl:
 
 build_dist:armv7-unknown-linux-gnueabihf:
   stage: release
-  tags: [armv7]
-  allow_failure: true
+  image: python:3.12-slim
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
       when: manual
@@ -156,8 +157,9 @@ build_dist:armv7-unknown-linux-gnueabihf:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
-    - apt-get update -qq || true
-    - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null 2>&1 || true
+    - apt-get update -qq
+    - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null
+    - python3 -m pip install --upgrade pip
     - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
     - make dist VERSION="$VERSION" PPT_DIST_TARGETS="armv7-unknown-linux-gnueabihf"
   artifacts:
@@ -168,7 +170,7 @@ build_dist:armv7-unknown-linux-gnueabihf:
 
 build_dist:armv7-unknown-linux-musleabihf:
   stage: release
-  tags: [armv7]
+  image: python:3.12-slim
   allow_failure: true
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
@@ -180,8 +182,9 @@ build_dist:armv7-unknown-linux-musleabihf:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
-    - apt-get update -qq || true
-    - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null 2>&1 || true
+    - apt-get update -qq
+    - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null
+    - python3 -m pip install --upgrade pip
     - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
     - make dist VERSION="$VERSION" PPT_DIST_TARGETS="armv7-unknown-linux-musleabihf"
   artifacts:
@@ -192,7 +195,7 @@ build_dist:armv7-unknown-linux-musleabihf:
 
 build_dist:x86_64-apple-darwin:
   stage: release
-  tags: [macos]
+  image: python:3.12-slim
   allow_failure: true
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
@@ -204,6 +207,9 @@ build_dist:x86_64-apple-darwin:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
+    - apt-get update -qq
+    - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null
+    - python3 -m pip install --upgrade pip
     - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
     - make dist VERSION="$VERSION" PPT_DIST_TARGETS="x86_64-apple-darwin"
   artifacts:
@@ -214,7 +220,7 @@ build_dist:x86_64-apple-darwin:
 
 build_dist:aarch64-apple-darwin:
   stage: release
-  tags: [macos-arm64]
+  image: python:3.12-slim
   allow_failure: true
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
@@ -226,6 +232,9 @@ build_dist:aarch64-apple-darwin:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
+    - apt-get update -qq
+    - apt-get install -y -qq make curl ca-certificates tar gzip >/dev/null
+    - python3 -m pip install --upgrade pip
     - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
     - make dist VERSION="$VERSION" PPT_DIST_TARGETS="aarch64-apple-darwin"
   artifacts:
