@@ -59,8 +59,16 @@ class PptError(Exception):
 @dataclass
 class PackageConfig:
     repo: str
-    version: str | None = None
+    # Constraint is currently an exact release tag (e.g. "v0.12.1").
+    # Future: allow ranges (e.g. "^2" / "~2.3").
+    constraint: str | None = None
     prefix: str | None = None
+
+
+@dataclass
+class PackageLockEntry:
+    repo: str
+    locked: str
 
 
 @dataclass
@@ -154,7 +162,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_parser = subparsers.add_parser("add", help="Add a package and install it")
     add_parser.add_argument("repo")
-    add_parser.add_argument("--version", dest="version")
+    add_parser.add_argument(
+        "--constraint",
+        dest="constraint",
+        help="Exact version constraint (release tag).",
+    )
     add_parser.add_argument("--prefix", dest="prefix")
     add_parser.set_defaults(handler=cmd_add)
 
@@ -199,11 +211,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync_parser.set_defaults(handler=cmd_sync)
 
-    upgrade_parser = subparsers.add_parser("upgrade", help="Upgrade unpinned packages")
+    upgrade_parser = subparsers.add_parser(
+        "upgrade",
+        help="Upgrade packages without an explicit constraint",
+    )
     upgrade_parser.add_argument("packages", nargs="*")
     upgrade_parser.set_defaults(handler=cmd_upgrade)
 
-    list_parser = subparsers.add_parser("list", help="List configured packages")
+    update_parser = subparsers.add_parser(
+        "update",
+        help="Fetch latest/available versions for configured packages",
+    )
+    update_parser.add_argument("packages", nargs="*")
+    update_parser.set_defaults(handler=cmd_update)
+
+    list_parser = subparsers.add_parser("list", help="List packages")
+    list_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Show all configured packages (default: only installed)",
+    )
+    list_parser.add_argument(
+        "--upgradable",
+        action="store_true",
+        help="Show packages that would be upgraded by `ppt upgrade`",
+    )
     list_parser.set_defaults(handler=cmd_list)
 
     info_parser = subparsers.add_parser("info", help="Show package details")
@@ -270,7 +302,7 @@ def cmd_complete_packages(args: argparse.Namespace) -> int:
 
     config_dir = Path(os.environ.get("PPT_CONFIG_DIR", Path.home() / ".config" / "ppt")).expanduser()
     config_file = config_dir / "packages.toml"
-    config = read_package_file(config_file)
+    config = read_config_file(config_file)
     if not config:
         return 0
 
@@ -344,7 +376,7 @@ _ppt() {
   cur=\"${COMP_WORDS[COMP_CWORD]}\"
   cmd=\"${COMP_WORDS[1]}\"
   if [ \"$COMP_CWORD\" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W 'add remove prefix sync upgrade list info platform' -- \"$cur\") )
+    COMPREPLY=( $(compgen -W 'add remove prefix sync upgrade update list info platform' -- \"$cur\") )
     return 0
   fi
   case \"$cmd\" in
@@ -369,8 +401,15 @@ _ppt() {
       fi
       COMPREPLY=()
       ;;
+    update)
+      if [ \"$COMP_CWORD\" -ge 2 ] && [[ \"$cur\" != -* ]]; then
+        COMPREPLY=( $(ppt _complete packages --query \"$cur\") )
+        return 0
+      fi
+      COMPREPLY=()
+      ;;
     add)
-      COMPREPLY=( $(compgen -W '--version --prefix' -- \"$cur\") )
+      COMPREPLY=( $(compgen -W '--constraint --prefix' -- \"$cur\") )
       ;;
     sync)
       COMPREPLY=( $(compgen -W '--check --quiet' -- \"$cur\") )
@@ -382,7 +421,7 @@ _ppt() {
       COMPREPLY=()
       ;;
     *)
-      COMPREPLY=( $(compgen -W 'add remove prefix sync upgrade list info platform' -- \"$cur\") )
+      COMPREPLY=( $(compgen -W 'add remove prefix sync upgrade update list info platform' -- \"$cur\") )
       ;;
   esac
 }
@@ -406,8 +445,9 @@ _ppt() {
     'remove:Remove a package'
     'prefix:Set a package prefix'
     'sync:Apply config and lock state'
-    'upgrade:Upgrade unpinned packages'
-    'list:List configured packages'
+    'upgrade:Upgrade unconstrained packages'
+    'update:Fetch available versions'
+    'list:List packages'
     'info:Show package details'
     'platform:Print current platform identifier'
   )
@@ -424,7 +464,7 @@ _ppt() {
     args)
       case $words[2] in
         add)
-          _arguments '--version=[Install a specific version]' '--prefix=[Command prefix]'
+          _arguments '--constraint=[Exact version constraint]' '--prefix=[Command prefix]'
           ;;
         sync)
           _arguments '--check[Check only]' '--quiet[Suppress normal output for --check]'
@@ -440,6 +480,11 @@ _ppt() {
           fi
           ;;
         upgrade)
+          if [[ $CURRENT -ge 3 && $PREFIX != -* ]]; then
+            compadd -- ${(f)$(ppt _complete packages --query "$PREFIX")}
+          fi
+          ;;
+        update)
           if [[ $CURRENT -ge 3 && $PREFIX != -* ]]; then
             compadd -- ${(f)$(ppt _complete packages --query "$PREFIX")}
           fi
@@ -467,16 +512,17 @@ if not contains -- "$ppt_bin" $PATH
 end
 
 complete -c ppt -f
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a add -d "Add a package and install it"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a remove -d "Remove a package"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a prefix -d "Set a package prefix"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a sync -d "Apply config and lock state"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a upgrade -d "Upgrade unpinned packages"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a list -d "List configured packages"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a info -d "Show package details"
-complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade list info platform" -a platform -d "Print current platform identifier"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade update list info platform" -a add -d "Add a package and install it"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade update list info platform" -a remove -d "Remove a package"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade update list info platform" -a prefix -d "Set a package prefix"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade update list info platform" -a sync -d "Apply config and lock state"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade update list info platform" -a upgrade -d "Upgrade unconstrained packages"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade update list info platform" -a update -d "Fetch available versions"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade update list info platform" -a list -d "List packages"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade update list info platform" -a info -d "Show package details"
+complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade update list info platform" -a platform -d "Print current platform identifier"
 
-complete -c ppt -n "__fish_seen_subcommand_from add" -l version -r -d "Install a specific version"
+complete -c ppt -n "__fish_seen_subcommand_from add" -l constraint -r -d "Exact version constraint"
 complete -c ppt -n "__fish_seen_subcommand_from add" -l prefix -r -d "Command prefix"
 complete -c ppt -n "__fish_seen_subcommand_from sync" -l check -d "Check only"
 complete -c ppt -n "__fish_seen_subcommand_from sync" -l quiet -d "Suppress normal output for --check"
@@ -485,22 +531,23 @@ complete -c ppt -n "__fish_seen_subcommand_from remove" -a "(ppt _complete packa
 complete -c ppt -n "__fish_seen_subcommand_from info" -a "(ppt _complete packages --query (commandline -ct))" -d "Configured package"
 complete -c ppt -n "__fish_seen_subcommand_from prefix" -a "(ppt _complete packages --query (commandline -ct))" -d "Configured package"
 complete -c ppt -n "__fish_seen_subcommand_from upgrade" -a "(ppt _complete packages --query (commandline -ct))" -d "Configured package"
+complete -c ppt -n "__fish_seen_subcommand_from update" -a "(ppt _complete packages --query (commandline -ct))" -d "Configured package"
 """
 
 
 def cmd_add(args: argparse.Namespace) -> int:
     paths = ensure_layout()
     platform_info = detect_platform()
-    config = read_package_file(paths.config_file)
+    config = read_config_file(paths.config_file)
     lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
 
     repo = normalize_repo_url(args.repo)
-    config_entry = PackageConfig(repo=repo, version=args.version, prefix=args.prefix)
+    config_entry = PackageConfig(repo=repo, constraint=args.constraint, prefix=args.prefix)
     config = upsert_config(config, config_entry)
-    write_package_file(paths.config_file, config)
+    write_config_file(paths.config_file, config)
 
-    target_version = args.version or lock.get(repo)
+    target_version = args.constraint or lock.get(repo)
     if target_version is None:
         release = fetch_release(repo, None)
         target_version = release["tag_name"]
@@ -573,7 +620,7 @@ exec python3 -m ppt \"$@\"
 
     # Seed config + lock so ppt can manage itself.
     config = [PackageConfig(repo=repo)]
-    write_package_file(paths.config_file, config)
+    write_config_file(paths.config_file, config)
     write_lock_file(paths.lock_file, {repo: version})
 
     state = {
@@ -628,7 +675,7 @@ exec python3 -m ppt \"$@\"
 
 def cmd_remove(args: argparse.Namespace) -> int:
     paths = ensure_layout()
-    config = read_package_file(paths.config_file)
+    config = read_config_file(paths.config_file)
     lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
     repo = resolve_package_ref(args.package, config)
@@ -636,7 +683,7 @@ def cmd_remove(args: argparse.Namespace) -> int:
     config = [entry for entry in config if entry.repo != repo]
     lock.pop(repo, None)
     uninstall_package(paths, repo, state)
-    write_package_file(paths.config_file, config)
+    write_config_file(paths.config_file, config)
     write_lock_file(paths.lock_file, lock)
     write_state(paths.state_file, state)
     print(f"removed {repo}")
@@ -645,12 +692,12 @@ def cmd_remove(args: argparse.Namespace) -> int:
 
 def cmd_prefix(args: argparse.Namespace) -> int:
     paths = ensure_layout()
-    config = read_package_file(paths.config_file)
+    config = read_config_file(paths.config_file)
     state = read_state(paths.state_file)
     repo = resolve_package_ref(args.package, config)
     entry = get_config_entry(config, repo)
     entry.prefix = args.prefix
-    write_package_file(paths.config_file, config)
+    write_config_file(paths.config_file, config)
 
     repo_state = state.get(repo)
     if repo_state and repo_state.get("installed_version"):
@@ -662,7 +709,7 @@ def cmd_prefix(args: argparse.Namespace) -> int:
 
 def cmd_sync(args: argparse.Namespace) -> int:
     paths = ensure_layout()
-    config = read_package_file(paths.config_file)
+    config = read_config_file(paths.config_file)
     lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
 
@@ -687,7 +734,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
     messages: list[str] = []
     changed_lock = False
     for entry in config:
-        target_version = entry.version or lock.get(entry.repo)
+        target_version = entry.constraint or lock.get(entry.repo)
         if target_version is None:
             release = fetch_release(entry.repo, None)
             target_version = release["tag_name"]
@@ -721,7 +768,7 @@ def sync_needed_reasons(
             reasons.append(f"remove unmanaged package {repo}")
 
     for entry in config:
-        target_version = entry.version or lock.get(entry.repo)
+        target_version = entry.constraint or lock.get(entry.repo)
         if target_version is None:
             reasons.append(f"missing lock entry for {entry.repo}")
             continue
@@ -736,7 +783,7 @@ def sync_needed_reasons(
             installed_version = repo_state.get("installed_version")
             if installed_version != target_version:
                 reasons.append(
-                    f"{entry.repo} installed {installed_version or '-'} but wants {target_version}"
+                    f"{entry.repo} installed {installed_version or '-'} but locked is {target_version}"
                 )
             elif (repo_state.get("prefix") or "") != (entry.prefix or ""):
                 reasons.append(f"{entry.repo} prefix differs from config")
@@ -765,7 +812,7 @@ def sync_needed_reasons(
 def cmd_upgrade(args: argparse.Namespace) -> int:
     paths = ensure_layout()
     platform_info = detect_platform()
-    config = read_package_file(paths.config_file)
+    config = read_config_file(paths.config_file)
     lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
     selected = set()
@@ -778,11 +825,18 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     for entry in config:
         if selected and entry.repo not in selected:
             continue
-        if entry.version:
-            messages.append(f"skipped pinned package {entry.repo} ({entry.version})")
+        if entry.constraint:
+            messages.append(f"skipped constrained package {entry.repo} ({entry.constraint})")
             continue
-        release = fetch_release(entry.repo, None)
-        target_version = release["tag_name"]
+        repo_state = state.get(entry.repo, {})
+        target_version = (repo_state.get("available_version") or "").strip() or None
+        if target_version is None:
+            release = fetch_release(entry.repo, None)
+            target_version = release["tag_name"]
+            repo_state = state.setdefault(entry.repo, {})
+            repo_state["latest_version"] = target_version
+            repo_state["available_version"] = target_version
+            repo_state["available_updated_at"] = int(time.time())
         previous = lock.get(entry.repo)
         if previous != target_version:
             changed_lock = True
@@ -801,52 +855,91 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     paths = ensure_layout()
-    config = read_package_file(paths.config_file)
+    config = read_config_file(paths.config_file)
     lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
     if not config:
         print("no packages configured")
         return 0
 
-    headers = ["PACKAGE", "WANTED", "LOCKED", "INSTALLED", "STATUS", "PREFIX"]
+    if args.upgradable:
+        headers = ["PACKAGE", "INSTALLED", "AVAILABLE", "LOCKED", "CONSTRAINT", "PREFIX"]
+        rows: list[list[str]] = []
+        missing_availability = False
+        for entry in sorted(config, key=lambda item: owner_repo_name(item.repo)):
+            if entry.constraint:
+                continue
+            repo_state = state.get(entry.repo, {})
+            installed = repo_state.get("installed_version")
+            if not installed:
+                continue
+            available = (repo_state.get("available_version") or "").strip()
+            if not available:
+                missing_availability = True
+                continue
+            if installed == available:
+                continue
+            rows.append(
+                [
+                    owner_repo_name(entry.repo),
+                    installed,
+                    available,
+                    lock.get(entry.repo, "-"),
+                    entry.constraint or "-",
+                    entry.prefix if entry.prefix is not None else "",
+                ]
+            )
+
+        if not rows:
+            if missing_availability:
+                print("no upgradable packages (availability unknown; run `ppt update`)")
+            else:
+                print("no upgradable packages")
+            return 0
+
+        _print_table(headers, rows)
+        if missing_availability:
+            print("\n(note) some packages are missing availability data; run `ppt update`")
+        return 0
+
+    # Default: only installed packages, unless --all.
+    entries: list[PackageConfig]
+    if args.all:
+        entries = config
+    else:
+        entries = []
+        for entry in config:
+            repo_state = state.get(entry.repo, {})
+            if repo_state.get("status") == "installed" and repo_state.get("installed_version"):
+                entries.append(entry)
+
+    if not entries:
+        print("no installed packages" if not args.all else "no packages configured")
+        return 0
+
+    headers = ["PACKAGE", "INSTALLED", "AVAILABLE", "LOCKED", "CONSTRAINT", "STATUS", "PREFIX"]
     rows: list[list[str]] = []
-    for entry in sorted(config, key=lambda item: owner_repo_name(item.repo)):
+    for entry in sorted(entries, key=lambda item: owner_repo_name(item.repo)):
         repo_state = state.get(entry.repo, {})
         rows.append(
             [
                 owner_repo_name(entry.repo),
-                entry.version or "latest",
-                lock.get(entry.repo, "-"),
                 repo_state.get("installed_version", "-"),
+                (repo_state.get("available_version") or "-").strip() or "-",
+                lock.get(entry.repo, "-"),
+                entry.constraint or "-",
                 repo_state.get("status", "configured"),
                 entry.prefix if entry.prefix is not None else "",
             ]
         )
 
-    widths = [len(header) for header in headers]
-    for row in rows:
-        for idx, value in enumerate(row):
-            widths[idx] = max(widths[idx], len(value))
-
-    def format_row(values: list[str]) -> str:
-        # Use spaces rather than tabs so this renders consistently.
-        parts = []
-        for idx, value in enumerate(values):
-            if idx == len(values) - 1:
-                parts.append(value)
-            else:
-                parts.append(value.ljust(widths[idx]))
-        return "  ".join(parts)
-
-    print(format_row(headers))
-    for row in rows:
-        print(format_row(row))
+    _print_table(headers, rows)
     return 0
 
 
 def cmd_info(args: argparse.Namespace) -> int:
     paths = ensure_layout()
-    config = read_package_file(paths.config_file)
+    config = read_config_file(paths.config_file)
     lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
     repo = resolve_package_ref(args.package, config)
@@ -855,8 +948,12 @@ def cmd_info(args: argparse.Namespace) -> int:
 
     print(f"repo: {repo}")
     print(f"package: {display_name(repo)}")
-    print(f"wanted: {entry.version or 'latest'}")
+    print(f"constraint: {entry.constraint or '-'}")
     print(f"locked: {lock.get(repo, '-')}")
+    available = (repo_state.get("available_version") or "-").strip() or "-"
+    latest = (repo_state.get("latest_version") or "-").strip() or "-"
+    print(f"available: {available}")
+    print(f"latest: {latest}")
     print(f"installed: {repo_state.get('installed_version', '-')}")
     asset_name = (repo_state.get("asset_name") or "").strip()
     if asset_name:
@@ -878,6 +975,53 @@ def cmd_platform(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_update(args: argparse.Namespace) -> int:
+    paths = ensure_layout()
+    config = read_config_file(paths.config_file)
+    state = read_state(paths.state_file)
+
+    selected: set[str] = set()
+    if args.packages:
+        for raw in args.packages:
+            selected.add(resolve_package_ref(raw, config))
+
+    messages: list[str] = []
+    for entry in config:
+        if selected and entry.repo not in selected:
+            continue
+
+        repo_state = state.setdefault(entry.repo, {})
+        try:
+            latest_release = fetch_release(entry.repo, None)
+            latest = (latest_release.get("tag_name") or "").strip()
+            if not latest:
+                raise PptError(f"failed to resolve latest release for {entry.repo}")
+            repo_state["latest_version"] = latest
+
+            if entry.constraint:
+                constrained_release = fetch_release(entry.repo, entry.constraint)
+                available = (constrained_release.get("tag_name") or entry.constraint).strip()
+            else:
+                available = latest
+
+            repo_state["available_version"] = available
+            repo_state["available_updated_at"] = int(time.time())
+            repo_state.pop("available_error", None)
+            messages.append(
+                f"updated {owner_repo_name(entry.repo)}: available {available} (latest {latest})"
+            )
+        except Exception as exc:
+            # Keep going; a single package failing shouldn't block others.
+            repo_state["available_error"] = str(exc)
+            repo_state["available_updated_at"] = int(time.time())
+            messages.append(f"warning: failed to update {owner_repo_name(entry.repo)}: {exc}")
+
+    write_state(paths.state_file, state)
+    for msg in messages:
+        print(msg)
+    return 0
+
+
 def ensure_layout() -> AppPaths:
     home = Path(os.environ.get("PPT_HOME", Path.home() / ".local" / "ppt"))
     config_dir = Path(os.environ.get("PPT_CONFIG_DIR", Path.home() / ".config" / "ppt"))
@@ -892,7 +1036,7 @@ def ensure_layout() -> AppPaths:
     if not state_file.exists():
         state_file.write_text("{}\n", encoding="utf-8")
     if not config_file.exists():
-        write_package_file(config_file, [])
+        write_config_file(config_file, [])
     if not lock_file.exists():
         write_lock_file(lock_file, {})
     return AppPaths(
@@ -1646,8 +1790,8 @@ def upsert_config(config: list[PackageConfig], candidate: PackageConfig) -> list
     for entry in config:
         if entry.repo == candidate.repo:
             prefix = candidate.prefix if candidate.prefix is not None else entry.prefix
-            version = candidate.version if candidate.version is not None else entry.version
-            result.append(PackageConfig(repo=entry.repo, version=version, prefix=prefix))
+            constraint = candidate.constraint if candidate.constraint is not None else entry.constraint
+            result.append(PackageConfig(repo=entry.repo, constraint=constraint, prefix=prefix))
             updated = True
         else:
             result.append(entry)
@@ -1669,45 +1813,41 @@ def write_state(path: Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def read_package_file(path: Path) -> list[PackageConfig]:
-    packages = []
-    if not path.exists():
-        return packages
-    current: dict[str, str] | None = None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        text = line.strip()
-        if not text or text.startswith("#"):
-            continue
-        if text == "[[package]]":
-            if current is not None:
-                packages.append(package_from_mapping(current, path))
-            current = {}
-            continue
-        if current is None:
-            raise PptError(f"unsupported TOML structure in {path}")
-        key, value = parse_key_value(text, path)
-        current[key] = value
-    if current is not None:
-        packages.append(package_from_mapping(current, path))
-    return packages
-
-
 def read_lock_file(path: Path) -> dict[str, str]:
     lock: dict[str, str] = {}
-    for package in read_package_file(path):
-        if not package.version:
-            raise PptError(f"lock entry missing version in {path}")
-        lock[package.repo] = package.version
+    for mapping in read_toml_package_mappings(path):
+        repo_raw = mapping.get("repo")
+        if not repo_raw:
+            raise PptError(f"package entry missing repo in {path}")
+        repo = normalize_repo_url(repo_raw)
+        locked = mapping.get("locked")
+        if not locked:
+            raise PptError(f"lock entry missing locked version in {path}")
+        lock[repo] = locked
     return lock
 
 
-def write_package_file(path: Path, packages: list[PackageConfig]) -> None:
+def read_config_file(path: Path) -> list[PackageConfig]:
+    config: list[PackageConfig] = []
+    for mapping in read_toml_package_mappings(path):
+        repo_raw = mapping.get("repo")
+        if not repo_raw:
+            raise PptError(f"package entry missing repo in {path}")
+        repo = normalize_repo_url(repo_raw)
+
+        constraint = mapping.get("constraint")
+        prefix = mapping.get("prefix")
+        config.append(PackageConfig(repo=repo, constraint=constraint, prefix=prefix))
+    return config
+
+
+def write_config_file(path: Path, packages: list[PackageConfig]) -> None:
     lines = ["# Managed by ppt", ""]
     for package in sorted(packages, key=lambda item: item.repo):
         lines.append("[[package]]")
         lines.append(f'repo = {toml_string(package.repo)}')
-        if package.version is not None:
-            lines.append(f'version = {toml_string(package.version)}')
+        if package.constraint is not None:
+            lines.append(f'constraint = {toml_string(package.constraint)}')
         if package.prefix is not None:
             lines.append(f'prefix = {toml_string(package.prefix)}')
         lines.append("")
@@ -1715,15 +1855,57 @@ def write_package_file(path: Path, packages: list[PackageConfig]) -> None:
 
 
 def write_lock_file(path: Path, lock: dict[str, str]) -> None:
-    packages = [PackageConfig(repo=repo, version=version) for repo, version in sorted(lock.items())]
-    write_package_file(path, packages)
+    lines = ["# Managed by ppt", ""]
+    for repo, locked in sorted(lock.items()):
+        lines.append("[[package]]")
+        lines.append(f'repo = {toml_string(repo)}')
+        lines.append(f'locked = {toml_string(locked)}')
+        lines.append("")
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
-def package_from_mapping(mapping: dict[str, str], path: Path) -> PackageConfig:
-    repo = mapping.get("repo")
-    if not repo:
-        raise PptError(f"package entry missing repo in {path}")
-    return PackageConfig(repo=normalize_repo_url(repo), version=mapping.get("version"), prefix=mapping.get("prefix"))
+def read_toml_package_mappings(path: Path) -> list[dict[str, str]]:
+    mappings: list[dict[str, str]] = []
+    if not path.exists():
+        return mappings
+    current: dict[str, str] | None = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        if text == "[[package]]":
+            if current is not None:
+                mappings.append(current)
+            current = {}
+            continue
+        if current is None:
+            raise PptError(f"unsupported TOML structure in {path}")
+        key, value = parse_key_value(text, path)
+        current[key] = value
+    if current is not None:
+        mappings.append(current)
+    return mappings
+
+
+def _print_table(headers: list[str], rows: list[list[str]]) -> None:
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for idx, value in enumerate(row):
+            widths[idx] = max(widths[idx], len(value))
+
+    def format_row(values: list[str]) -> str:
+        # Use spaces rather than tabs so this renders consistently.
+        parts = []
+        for idx, value in enumerate(values):
+            if idx == len(values) - 1:
+                parts.append(value)
+            else:
+                parts.append(value.ljust(widths[idx]))
+        return "  ".join(parts)
+
+    print(format_row(headers))
+    for row in rows:
+        print(format_row(row))
 
 
 def parse_key_value(text: str, path: Path) -> tuple[str, str]:

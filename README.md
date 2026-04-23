@@ -60,7 +60,7 @@ ppt update-shell-config
 
 ```text
 # add a package to the managed set and install it
-ppt add <repo-url> [--version <version>] [--prefix <prefix>]
+ppt add <repo-url> [--constraint <tag>] [--prefix <prefix>]
 
 # remove a package
 ppt remove <repo-url|short-id>
@@ -71,11 +71,20 @@ ppt prefix <repo-url|short-id> <prefix>
 # make this machine match the shared config and lock file
 ppt sync
 
-# bump locked versions for unpinned packages and install them locally
+# fetch the latest/available versions for configured packages
+ppt update [repo-url|short-id]
+
+# bump locked versions for unconstrained packages and install them locally
 ppt upgrade [repo-url|short-id]
 
-# list configured packages and current status
+# list installed packages
 ppt list
+
+# list all configured packages
+ppt list --all
+
+# list packages that would be upgraded by `ppt upgrade`
+ppt list --upgradable
 
 # show details for one package
 ppt info <repo-url|short-id>
@@ -92,7 +101,13 @@ ppt info <repo-url|short-id>
 ```
 
 - `packages.toml` is the desired package set.
-- `packages.lock.toml` records the resolved versions that unpinned packages should use
+- `packages.lock.toml` records the locked versions that unconstrained packages should use
+
+Terminology:
+- **Constraint**: what you want (currently only an exact version tag; future: ranges)
+- **Locked**: the resolved version this config will install on machines
+- **Installed**: what is currently installed on this machine
+- **Available**: the latest version matching the constraint (populated by `ppt update`)
 
 By keeping these files version controlled, using for example a dot manager like yadm,
 you can share the same `ppt` config and state between machines, VMs and containers
@@ -108,7 +123,7 @@ ppt add https://github.com/neovim/neovim
 ppt add https://github.com/myself/neovim --prefix my-
 
 # install a specific version as ~/.local/ppt/bin/nvim-0.12.1
-ppt add https://github.com/neovim/neovim --version v0.12.1
+ppt add https://github.com/neovim/neovim --constraint v0.12.1
 
 # change prefixes so your fork becomes nvim and upstream becomes src-nvim
 ppt prefix https://github.com/neovim/neovim src-
@@ -119,7 +134,7 @@ ppt prefix https://github.com/myself/neovim ""
 ppt sync --check
 ppt sync
 
-# explicitly bump unpinned packages to newer releases
+# explicitly bump unconstrained packages to newer releases
 ppt upgrade
 ```
 
@@ -136,8 +151,12 @@ system is already in sync, and exits with `10` when a sync is needed. In the
 out-of-sync case it prints a short message telling you to run `ppt sync`. This
 is intended for shell startup hooks or prompt scripts.
 
-`ppt upgrade` updates the locked versions for unpinned packages and installs
-those new versions on the current machine. This keeps upgrades explicit, which
+`ppt update` fetches the latest release info for your configured packages and stores
+it locally so commands like `ppt info` and `ppt list --upgradable` can show what is
+available without doing network calls every time.
+
+`ppt upgrade` updates the locked versions for packages without an explicit constraint
+and installs those new versions on the current machine. This keeps upgrades explicit, which
 is useful when tool config or plugins may break across releases.
 
 If a package is configured but has no matching release artifact for the current

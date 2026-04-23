@@ -130,7 +130,7 @@ class TestCliFlows(CliTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         self.assertIn("installed neovim v1.0.0", stdout)
-        self.assertIn('version = "v1.0.0"', (self.config / "packages.lock.toml").read_text())
+        self.assertIn('locked = "v1.0.0"', (self.config / "packages.lock.toml").read_text())
         self.assert_link_target_contains(self.home / "bin" / "nvim", "v1.0.0")
 
     def test_prefix_relinks_existing_install(self) -> None:
@@ -155,7 +155,7 @@ class TestCliFlows(CliTestCase):
             encoding="utf-8",
         )
         (self.config / "packages.lock.toml").write_text(
-            '# Managed by ppt\n\n[[package]]\nrepo = "https://github.com/neovim/neovim"\nversion = "v2.0.0"\n',
+            '# Managed by ppt\n\n[[package]]\nrepo = "https://github.com/neovim/neovim"\nlocked = "v2.0.0"\n',
             encoding="utf-8",
         )
 
@@ -166,7 +166,7 @@ class TestCliFlows(CliTestCase):
         self.assertIn("installed neovim v2.0.0", stdout)
         self.assert_link_target_contains(self.home / "bin" / "src-nvim", "v2.0.0")
 
-    def test_upgrade_moves_unpinned_package_to_new_release(self) -> None:
+    def test_upgrade_moves_unconstrained_package_to_new_release(self) -> None:
         repo = "https://github.com/neovim/neovim"
         self.releases.add_release(repo, "v1.0.0", {"nvim": "#!/bin/sh\necho nvim v1\n"})
         self.run_ppt("add", repo)
@@ -177,7 +177,7 @@ class TestCliFlows(CliTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         self.assertIn("installed neovim v2.0.0", stdout)
-        self.assertIn('version = "v2.0.0"', (self.config / "packages.lock.toml").read_text())
+        self.assertIn('locked = "v2.0.0"', (self.config / "packages.lock.toml").read_text())
         self.assert_link_target_contains(self.home / "bin" / "nvim", "v2.0.0")
 
     def test_remove_uninstalls_and_cleans_state(self) -> None:
@@ -194,6 +194,43 @@ class TestCliFlows(CliTestCase):
         self.assertFalse((self.home / "packages" / "neovim--neovim").exists())
         self.assertEqual((self.config / "packages.toml").read_text(), "# Managed by ppt\n")
         self.assertEqual((self.config / "packages.lock.toml").read_text(), "# Managed by ppt\n")
+
+    def test_update_populates_available_versions_and_list_upgradable(self) -> None:
+        repo = "https://github.com/neovim/neovim"
+        self.releases.add_release(repo, "v1.0.0", {"nvim": "#!/bin/sh\necho nvim v1\n"})
+        self.run_ppt("add", repo)
+        self.releases.add_release(repo, "v2.0.0", {"nvim": "#!/bin/sh\necho nvim v2\n"})
+
+        code, stdout, stderr = self.run_ppt("update")
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("updated neovim/neovim", stdout)
+        self.assertIn("available v2.0.0", stdout)
+
+        code, stdout, stderr = self.run_ppt("list", "--upgradable")
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("PACKAGE", stdout)
+        self.assertIn("AVAILABLE", stdout)
+        self.assertIn("neovim/neovim", stdout)
+        self.assertIn("v1.0.0", stdout)
+        self.assertIn("v2.0.0", stdout)
+
+        code, stdout, stderr = self.run_ppt("info", "neovim")
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("available: v2.0.0", stdout)
+        self.assertIn("latest: v2.0.0", stdout)
+
+    def test_list_default_only_shows_installed(self) -> None:
+        (self.config / "packages.toml").write_text(
+            '# Managed by ppt\n\n[[package]]\nrepo = "https://github.com/neovim/neovim"\n',
+            encoding="utf-8",
+        )
+        code, stdout, stderr = self.run_ppt("list")
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(stdout.strip(), "no installed packages")
 
     def test_add_installs_zellij(self) -> None:
         repo = "https://github.com/zellij-org/zellij"
