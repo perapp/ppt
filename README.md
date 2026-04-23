@@ -97,11 +97,9 @@ ppt info <repo-url|short-id>
 ```text
 ~/.config/ppt/
   packages.toml
-  packages.lock.toml
 ```
 
-- `packages.toml` is the desired package set.
-- `packages.lock.toml` records the locked versions that unconstrained packages should use
+- `packages.toml` is the desired package set and the locked versions.
 
 Terminology:
 - **Constraint**: what you want (currently only an exact version tag; future: ranges)
@@ -109,7 +107,7 @@ Terminology:
 - **Installed**: what is currently installed on this machine
 - **Available**: the latest version matching the constraint (populated by `ppt update`)
 
-By keeping these files version controlled, using for example a dot manager like yadm,
+By keeping this file version controlled, using for example a dot manager like yadm,
 you can share the same `ppt` config and state between machines, VMs and containers
 while still keeping upgrades explicit.
 
@@ -142,9 +140,8 @@ ppt upgrade
 
 `ppt add` records a package in config and installs it immediately when possible.
 
-`ppt sync` makes the current machine match `packages.toml` and
-`packages.lock.toml`. This is the command to run after pulling updated dotfiles
-onto another machine.
+`ppt sync` makes the current machine match `packages.toml`. This is the command to run
+after pulling updated dotfiles onto another machine.
 
 `ppt sync --check` performs a local-only drift check, prints nothing when the
 system is already in sync, and exits with `10` when a sync is needed. In the

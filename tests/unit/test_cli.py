@@ -130,7 +130,7 @@ class TestCliFlows(CliTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         self.assertIn("installed neovim v1.0.0", stdout)
-        self.assertIn('locked = "v1.0.0"', (self.config / "packages.lock.toml").read_text())
+        self.assertIn('locked = "v1.0.0"', (self.config / "packages.toml").read_text())
         self.assert_link_target_contains(self.home / "bin" / "nvim", "v1.0.0")
 
     def test_prefix_relinks_existing_install(self) -> None:
@@ -151,11 +151,7 @@ class TestCliFlows(CliTestCase):
         repo = "https://github.com/neovim/neovim"
         self.releases.add_release(repo, "v2.0.0", {"nvim": "#!/bin/sh\necho nvim v2\n"})
         (self.config / "packages.toml").write_text(
-            '# Managed by ppt\n\n[[package]]\nrepo = "https://github.com/neovim/neovim"\nprefix = "src-"\n',
-            encoding="utf-8",
-        )
-        (self.config / "packages.lock.toml").write_text(
-            '# Managed by ppt\n\n[[package]]\nrepo = "https://github.com/neovim/neovim"\nlocked = "v2.0.0"\n',
+            '# Managed by ppt\n\n[[package]]\nrepo = "https://github.com/neovim/neovim"\nlocked = "v2.0.0"\nprefix = "src-"\n',
             encoding="utf-8",
         )
 
@@ -177,7 +173,7 @@ class TestCliFlows(CliTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         self.assertIn("installed neovim v2.0.0", stdout)
-        self.assertIn('locked = "v2.0.0"', (self.config / "packages.lock.toml").read_text())
+        self.assertIn('locked = "v2.0.0"', (self.config / "packages.toml").read_text())
         self.assert_link_target_contains(self.home / "bin" / "nvim", "v2.0.0")
 
     def test_remove_uninstalls_and_cleans_state(self) -> None:
@@ -193,7 +189,6 @@ class TestCliFlows(CliTestCase):
         self.assertFalse((self.home / "bin" / "nvim").exists())
         self.assertFalse((self.home / "packages" / "neovim--neovim").exists())
         self.assertEqual((self.config / "packages.toml").read_text(), "# Managed by ppt\n")
-        self.assertEqual((self.config / "packages.lock.toml").read_text(), "# Managed by ppt\n")
 
     def test_update_populates_available_versions_and_list_upgradable(self) -> None:
         repo = "https://github.com/neovim/neovim"

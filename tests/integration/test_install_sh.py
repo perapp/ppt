@@ -131,8 +131,8 @@ exit 2
 
     packages_toml = (ppt_config / "packages.toml").read_text(encoding="utf-8")
     assert "https://gitlab.com/perapp/ppt" in packages_toml
-    lock_toml = (ppt_config / "packages.lock.toml").read_text(encoding="utf-8")
-    assert version in lock_toml
+    packages_toml = (ppt_config / "packages.toml").read_text(encoding="utf-8")
+    assert version in packages_toml
 
     # The installed ppt should report itself as the single configured package.
     proc = subprocess.run(

@@ -62,13 +62,9 @@ class PackageConfig:
     # Constraint is currently an exact release tag (e.g. "v0.12.1").
     # Future: allow ranges (e.g. "^2" / "~2.3").
     constraint: str | None = None
+    # Locked is the resolved version to install when constraint is not set.
+    locked: str | None = None
     prefix: str | None = None
-
-
-@dataclass
-class PackageLockEntry:
-    repo: str
-    locked: str
 
 
 @dataclass
@@ -97,7 +93,6 @@ class AppPaths:
     bin_dir: Path
     state_file: Path
     config_file: Path
-    lock_file: Path
 
 
 def main() -> int:
@@ -172,7 +167,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     install_parser = subparsers.add_parser("install", help="Install ppt into your home directory")
     install_parser.add_argument("--repo", dest="repo", default=None, help="Repo URL to record in config")
-    install_parser.add_argument("--version", dest="version", default=None, help="Version to record in lock")
+    install_parser.add_argument(
+        "--version",
+        dest="version",
+        default=None,
+        help="Version to record as locked",
+    )
     install_parser.add_argument("--asset-name", dest="asset_name", default=None)
     install_parser.add_argument("--asset-url", dest="asset_url", default=None)
     install_parser.add_argument(
@@ -539,22 +539,21 @@ def cmd_add(args: argparse.Namespace) -> int:
     paths = ensure_layout()
     platform_info = detect_platform()
     config = read_config_file(paths.config_file)
-    lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
 
     repo = normalize_repo_url(args.repo)
     config_entry = PackageConfig(repo=repo, constraint=args.constraint, prefix=args.prefix)
     config = upsert_config(config, config_entry)
-    write_config_file(paths.config_file, config)
 
-    target_version = args.constraint or lock.get(repo)
+    entry = get_config_entry(config, repo)
+    target_version = entry.constraint or entry.locked
     if target_version is None:
         release = fetch_release(repo, None)
         target_version = release["tag_name"]
-    lock[repo] = target_version
-    write_lock_file(paths.lock_file, lock)
+    entry.locked = target_version
+    write_config_file(paths.config_file, config)
 
-    result = install_package(paths, platform_info, config_entry, target_version, state)
+    result = install_package(paths, platform_info, entry, target_version, state)
     write_state(paths.state_file, state)
     print(result)
     return 0
@@ -619,9 +618,8 @@ exec python3 -m ppt \"$@\"
         replace_symlink(source, launcher)
 
     # Seed config + lock so ppt can manage itself.
-    config = [PackageConfig(repo=repo)]
+    config = [PackageConfig(repo=repo, locked=version)]
     write_config_file(paths.config_file, config)
-    write_lock_file(paths.lock_file, {repo: version})
 
     state = {
         repo: {
@@ -676,15 +674,12 @@ exec python3 -m ppt \"$@\"
 def cmd_remove(args: argparse.Namespace) -> int:
     paths = ensure_layout()
     config = read_config_file(paths.config_file)
-    lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
     repo = resolve_package_ref(args.package, config)
 
     config = [entry for entry in config if entry.repo != repo]
-    lock.pop(repo, None)
     uninstall_package(paths, repo, state)
     write_config_file(paths.config_file, config)
-    write_lock_file(paths.lock_file, lock)
     write_state(paths.state_file, state)
     print(f"removed {repo}")
     return 0
@@ -710,12 +705,11 @@ def cmd_prefix(args: argparse.Namespace) -> int:
 def cmd_sync(args: argparse.Namespace) -> int:
     paths = ensure_layout()
     config = read_config_file(paths.config_file)
-    lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
 
     if args.check:
         platform_info = detect_platform()
-        reasons = sync_needed_reasons(paths, config, lock, state, platform_info)
+        reasons = sync_needed_reasons(paths, config, state, platform_info)
         if reasons:
             if not args.quiet:
                 count = len(reasons)
@@ -732,21 +726,20 @@ def cmd_sync(args: argparse.Namespace) -> int:
             uninstall_package(paths, repo, state)
 
     messages: list[str] = []
-    changed_lock = False
+    changed_config = False
     for entry in config:
-        target_version = entry.constraint or lock.get(entry.repo)
+        target_version = entry.constraint or entry.locked
         if target_version is None:
             release = fetch_release(entry.repo, None)
             target_version = release["tag_name"]
-        if lock.get(entry.repo) != target_version:
-            lock[entry.repo] = target_version
-            changed_lock = True
+            entry.locked = target_version
+            changed_config = True
         message = install_package(paths, platform_info, entry, target_version, state)
         if message:
             messages.append(message)
 
-    if changed_lock:
-        write_lock_file(paths.lock_file, lock)
+    if changed_config:
+        write_config_file(paths.config_file, config)
     write_state(paths.state_file, state)
     for message in messages:
         print(message)
@@ -756,7 +749,6 @@ def cmd_sync(args: argparse.Namespace) -> int:
 def sync_needed_reasons(
     paths: AppPaths,
     config: list[PackageConfig],
-    lock: dict[str, str],
     state: dict,
     platform_info: PlatformInfo,
 ) -> list[str]:
@@ -768,9 +760,9 @@ def sync_needed_reasons(
             reasons.append(f"remove unmanaged package {repo}")
 
     for entry in config:
-        target_version = entry.constraint or lock.get(entry.repo)
+        target_version = entry.constraint or entry.locked
         if target_version is None:
-            reasons.append(f"missing lock entry for {entry.repo}")
+            reasons.append(f"missing locked version for {entry.repo}")
             continue
 
         repo_state = state.get(entry.repo, {})
@@ -813,7 +805,6 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     paths = ensure_layout()
     platform_info = detect_platform()
     config = read_config_file(paths.config_file)
-    lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
     selected = set()
     if args.packages:
@@ -821,7 +812,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             selected.add(resolve_package_ref(raw, config))
 
     messages: list[str] = []
-    changed_lock = False
+    changed_config = False
     for entry in config:
         if selected and entry.repo not in selected:
             continue
@@ -837,16 +828,16 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             repo_state["latest_version"] = target_version
             repo_state["available_version"] = target_version
             repo_state["available_updated_at"] = int(time.time())
-        previous = lock.get(entry.repo)
+        previous = entry.locked
         if previous != target_version:
-            changed_lock = True
-            lock[entry.repo] = target_version
+            changed_config = True
+            entry.locked = target_version
         message = install_package(paths, platform_info, entry, target_version, state)
         if message:
             messages.append(message)
 
-    if changed_lock:
-        write_lock_file(paths.lock_file, lock)
+    if changed_config:
+        write_config_file(paths.config_file, config)
     write_state(paths.state_file, state)
     for message in messages:
         print(message)
@@ -856,7 +847,6 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
 def cmd_list(args: argparse.Namespace) -> int:
     paths = ensure_layout()
     config = read_config_file(paths.config_file)
-    lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
     if not config:
         print("no packages configured")
@@ -884,7 +874,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                     owner_repo_name(entry.repo),
                     installed,
                     available,
-                    lock.get(entry.repo, "-"),
+                    entry.locked or "-",
                     entry.constraint or "-",
                     entry.prefix if entry.prefix is not None else "",
                 ]
@@ -926,7 +916,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                 owner_repo_name(entry.repo),
                 repo_state.get("installed_version", "-"),
                 (repo_state.get("available_version") or "-").strip() or "-",
-                lock.get(entry.repo, "-"),
+                entry.locked or "-",
                 entry.constraint or "-",
                 repo_state.get("status", "configured"),
                 entry.prefix if entry.prefix is not None else "",
@@ -940,7 +930,6 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_info(args: argparse.Namespace) -> int:
     paths = ensure_layout()
     config = read_config_file(paths.config_file)
-    lock = read_lock_file(paths.lock_file)
     state = read_state(paths.state_file)
     repo = resolve_package_ref(args.package, config)
     entry = get_config_entry(config, repo)
@@ -949,7 +938,7 @@ def cmd_info(args: argparse.Namespace) -> int:
     print(f"repo: {repo}")
     print(f"package: {display_name(repo)}")
     print(f"constraint: {entry.constraint or '-'}")
-    print(f"locked: {lock.get(repo, '-')}")
+    print(f"locked: {entry.locked or '-'}")
     available = (repo_state.get("available_version") or "-").strip() or "-"
     latest = (repo_state.get("latest_version") or "-").strip() or "-"
     print(f"available: {available}")
@@ -1030,15 +1019,12 @@ def ensure_layout() -> AppPaths:
     bin_dir = home / "bin"
     state_file = home / "state.json"
     config_file = config_dir / "packages.toml"
-    lock_file = config_dir / "packages.lock.toml"
     for directory in (home, config_dir, cache_dir, packages_dir, bin_dir):
         directory.mkdir(parents=True, exist_ok=True)
     if not state_file.exists():
         state_file.write_text("{}\n", encoding="utf-8")
     if not config_file.exists():
         write_config_file(config_file, [])
-    if not lock_file.exists():
-        write_lock_file(lock_file, {})
     return AppPaths(
         home=home,
         config_dir=config_dir,
@@ -1047,7 +1033,6 @@ def ensure_layout() -> AppPaths:
         bin_dir=bin_dir,
         state_file=state_file,
         config_file=config_file,
-        lock_file=lock_file,
     )
 
 
@@ -1791,7 +1776,8 @@ def upsert_config(config: list[PackageConfig], candidate: PackageConfig) -> list
         if entry.repo == candidate.repo:
             prefix = candidate.prefix if candidate.prefix is not None else entry.prefix
             constraint = candidate.constraint if candidate.constraint is not None else entry.constraint
-            result.append(PackageConfig(repo=entry.repo, constraint=constraint, prefix=prefix))
+            locked = candidate.locked if candidate.locked is not None else entry.locked
+            result.append(PackageConfig(repo=entry.repo, constraint=constraint, locked=locked, prefix=prefix))
             updated = True
         else:
             result.append(entry)
@@ -1813,20 +1799,6 @@ def write_state(path: Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def read_lock_file(path: Path) -> dict[str, str]:
-    lock: dict[str, str] = {}
-    for mapping in read_toml_package_mappings(path):
-        repo_raw = mapping.get("repo")
-        if not repo_raw:
-            raise PptError(f"package entry missing repo in {path}")
-        repo = normalize_repo_url(repo_raw)
-        locked = mapping.get("locked")
-        if not locked:
-            raise PptError(f"lock entry missing locked version in {path}")
-        lock[repo] = locked
-    return lock
-
-
 def read_config_file(path: Path) -> list[PackageConfig]:
     config: list[PackageConfig] = []
     for mapping in read_toml_package_mappings(path):
@@ -1836,8 +1808,9 @@ def read_config_file(path: Path) -> list[PackageConfig]:
         repo = normalize_repo_url(repo_raw)
 
         constraint = mapping.get("constraint")
+        locked = mapping.get("locked")
         prefix = mapping.get("prefix")
-        config.append(PackageConfig(repo=repo, constraint=constraint, prefix=prefix))
+        config.append(PackageConfig(repo=repo, constraint=constraint, locked=locked, prefix=prefix))
     return config
 
 
@@ -1848,18 +1821,10 @@ def write_config_file(path: Path, packages: list[PackageConfig]) -> None:
         lines.append(f'repo = {toml_string(package.repo)}')
         if package.constraint is not None:
             lines.append(f'constraint = {toml_string(package.constraint)}')
+        if package.locked is not None:
+            lines.append(f'locked = {toml_string(package.locked)}')
         if package.prefix is not None:
             lines.append(f'prefix = {toml_string(package.prefix)}')
-        lines.append("")
-    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-
-
-def write_lock_file(path: Path, lock: dict[str, str]) -> None:
-    lines = ["# Managed by ppt", ""]
-    for repo, locked in sorted(lock.items()):
-        lines.append("[[package]]")
-        lines.append(f'repo = {toml_string(repo)}')
-        lines.append(f'locked = {toml_string(locked)}')
         lines.append("")
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
