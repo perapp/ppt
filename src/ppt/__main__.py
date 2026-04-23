@@ -515,8 +515,11 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 def cmd_install(args: argparse.Namespace) -> int:
     from_dir = Path(args.from_dir).expanduser().resolve()
-    if not (from_dir / "src" / "ppt" / "__main__.py").exists():
-        raise PptError(f"invalid --from-dir (missing src/ppt): {from_dir}")
+
+    has_src = (from_dir / "src" / "ppt" / "__main__.py").exists()
+    has_bin = (from_dir / "bin" / "ppt").exists()
+    if not has_src and not has_bin:
+        raise PptError(f"invalid --from-dir (missing bin/ppt or src/ppt): {from_dir}")
 
     # Install into standard layout.
     paths = ensure_layout()
@@ -537,27 +540,36 @@ def cmd_install(args: argparse.Namespace) -> int:
             dest = package_dir / child.name
             shutil.copytree(child, dest, dirs_exist_ok=True)
 
-    if not (package_dir / "src" / "ppt" / "__main__.py").exists():
-        raise PptError(f"installed package did not contain src/ppt: {package_dir}")
+    if has_src:
+        if not (package_dir / "src" / "ppt" / "__main__.py").exists():
+            raise PptError(f"installed package did not contain src/ppt: {package_dir}")
 
-    # Stable launcher that points at installed sources.
-    paths.bin_dir.mkdir(parents=True, exist_ok=True)
-    launcher = paths.bin_dir / "ppt"
-    launcher.write_text(
-        """#!/usr/bin/env bash
+        # Stable launcher that points at installed sources.
+        paths.bin_dir.mkdir(parents=True, exist_ok=True)
+        launcher = paths.bin_dir / "ppt"
+        launcher.write_text(
+            """#!/usr/bin/env bash
 set -euo pipefail
 export PPT_HOME=\"{ppt_home}\"
 export PPT_CONFIG_DIR=\"{ppt_config}\"
 export PYTHONPATH=\"{pkg_dir}/src${{PYTHONPATH:+:$PYTHONPATH}}\"
 exec python3 -m ppt \"$@\"
 """.format(
-            ppt_home=str(paths.home),
-            ppt_config=str(paths.config_dir),
-            pkg_dir=str(package_dir),
-        ),
-        encoding="utf-8",
-    )
-    launcher.chmod(0o755)
+                ppt_home=str(paths.home),
+                ppt_config=str(paths.config_dir),
+                pkg_dir=str(package_dir),
+            ),
+            encoding="utf-8",
+        )
+        launcher.chmod(0o755)
+    else:
+        # Binary-only distribution: create a stable symlink launcher.
+        source = package_dir / "bin" / "ppt"
+        if not source.exists():
+            raise PptError(f"installed package did not contain bin/ppt: {package_dir}")
+        paths.bin_dir.mkdir(parents=True, exist_ok=True)
+        launcher = paths.bin_dir / "ppt"
+        replace_symlink(source, launcher)
 
     # Seed config + lock so ppt can manage itself.
     config = [PackageConfig(repo=repo)]

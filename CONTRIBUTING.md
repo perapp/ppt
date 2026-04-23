@@ -48,9 +48,21 @@ You can also use the convenience wrapper:
 ```
 
 Notes:
- - The sandbox starts from a locally-built release asset in `dist/`.
- - To rebuild just the image: `make sandbox-image`.
- - To rebuild just the release asset: `make release-assets`.
+  - The sandbox starts from a locally-built release asset in `dist/`.
+  - To rebuild just the image: `make sandbox-image`.
+  - To rebuild just the release asset: `make release-assets`.
+
+## Building Release Assets
+
+Release assets are produced as tarballs containing `bin/ppt`.
+
+`make dist` builds tarballs for `PPT_DIST_TARGETS` (defaults to the current host platform).
+
+This uses PyOxidizer to build a standalone `ppt` executable that does not require a system Python.
+Prerequisites for building locally:
+- Rust toolchain (`cargo`)
+- A C toolchain (`cc`, `ar`)
+- For musl targets: `musl-gcc` (e.g. Debian package `musl-tools`)
 
 ## CI Config Validation
 

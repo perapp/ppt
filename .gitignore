@@ -6,3 +6,6 @@ __pycache__/
 dev/.image.sandbox
 dist/
 dev/example-packages/asset-lists
+build/
+dev/example-packages/asset-matrix.csv
+dev/example-packages/.~lock.*

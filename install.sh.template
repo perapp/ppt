@@ -11,11 +11,6 @@ PPT_VERSION="{{PPT_VERSION}}"
 PPT_HOME=${PPT_HOME:-$HOME/.local/ppt}
 PPT_CONFIG_DIR=${PPT_CONFIG_DIR:-$HOME/.config/ppt}
 
-if ! command -v python3 >/dev/null 2>&1; then
-  printf 'python3 is required to install ppt\n' >&2
-  exit 1
-fi
-
 if ! command -v curl >/dev/null 2>&1; then
   printf 'curl is required to install ppt\n' >&2
   exit 1
@@ -54,32 +49,109 @@ case "$shell_config" in
 esac
 
 # Allow local/sandbox testing via env override.
-asset_url=${PPT_INSTALL_ASSET_URL:-"$PPT_REPO_URL/-/releases/$PPT_VERSION/downloads/ppt-linux.tar.gz"}
+detect_platform() {
+  # Rust-style target identifiers used by ppt release assets.
+  #
+  # Linux:  <arch>-unknown-linux-<env>
+  # macOS:  <arch>-apple-darwin
+
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  arch=$(uname -m | tr '[:upper:]' '[:lower:]')
+
+  case "$arch" in
+    x86_64|amd64) arch=x86_64 ;;
+    aarch64|arm64) arch=aarch64 ;;
+    armv7l|armv7|arm) arch=armv7 ;;
+    *) printf 'unsupported architecture: %s\n' "$arch" >&2; exit 1 ;;
+  esac
+
+  if [ "$os" = "darwin" ]; then
+    printf '%s\n' "${arch}-apple-darwin"
+    return 0
+  fi
+
+  if [ "$os" != "linux" ]; then
+    printf 'unsupported OS: %s\n' "$os" >&2
+    exit 1
+  fi
+
+  env=gnu
+  if command -v ldd >/dev/null 2>&1; then
+    if ldd --version 2>&1 | tr '[:upper:]' '[:lower:]' | grep -q musl; then
+      env=musl
+    fi
+  fi
+  if [ "$arch" = "armv7" ]; then
+    if [ "$env" = "musl" ]; then
+      env=musleabihf
+    else
+      env=gnueabihf
+    fi
+  fi
+
+  printf '%s\n' "${arch}-unknown-linux-${env}"
+}
+
+platform=$(detect_platform)
+asset_name_default="ppt-${PPT_VERSION}-${platform}.tar.gz"
+asset_url_default="$PPT_REPO_URL/-/releases/$PPT_VERSION/downloads/$asset_name_default"
+
+asset_url=${PPT_INSTALL_ASSET_URL:-"$asset_url_default"}
+
+asset_name="$asset_name_default"
+if [ -n "${PPT_INSTALL_ASSET_URL:-}" ]; then
+  asset_name=${asset_url##*/}
+  asset_name=${asset_name%%\?*}
+fi
 
 tmp_dir=$(mktemp -d)
 cleanup() { rm -rf "$tmp_dir"; }
 trap cleanup EXIT
 
-archive_path="$tmp_dir/ppt-linux.tar.gz"
+archive_path="$tmp_dir/$asset_name"
 curl -fsSL "$asset_url" -o "$archive_path"
 
 extract_dir="$tmp_dir/extract"
 mkdir -p "$extract_dir"
 tar -xzf "$archive_path" -C "$extract_dir"
 
-if [ ! -f "$extract_dir/src/ppt/__main__.py" ]; then
-  printf 'downloaded release asset did not contain src/ppt\n' >&2
+has_bin=0
+has_src=0
+
+if [ -x "$extract_dir/bin/ppt" ]; then
+  has_bin=1
+elif [ -f "$extract_dir/src/ppt/__main__.py" ]; then
+  has_src=1
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf 'python3 is required to install this (source) ppt release asset\n' >&2
+    exit 1
+  fi
+else
+  printf 'downloaded release asset did not contain bin/ppt or src/ppt\n' >&2
   exit 1
 fi
 
-PPT_HOME="$PPT_HOME" \
-PPT_CONFIG_DIR="$PPT_CONFIG_DIR" \
-PPT_REPO_URL="$PPT_REPO_URL" \
-PYTHONPATH="$extract_dir/src${PYTHONPATH:+:$PYTHONPATH}" \
-python3 -m ppt install \
-  --repo "$PPT_REPO_URL" \
-  --version "$PPT_VERSION" \
-  --asset-name "ppt-linux.tar.gz" \
-  --asset-url "$asset_url" \
-  --from-dir "$extract_dir" \
-  --shell-config "$shell_config"
+if [ "$has_bin" = "1" ]; then
+  PPT_HOME="$PPT_HOME" \
+  PPT_CONFIG_DIR="$PPT_CONFIG_DIR" \
+  PPT_REPO_URL="$PPT_REPO_URL" \
+  "${extract_dir}/bin/ppt" install \
+    --repo "$PPT_REPO_URL" \
+    --version "$PPT_VERSION" \
+    --asset-name "$asset_name" \
+    --asset-url "$asset_url" \
+    --from-dir "$extract_dir" \
+    --shell-config "$shell_config"
+else
+  PPT_HOME="$PPT_HOME" \
+  PPT_CONFIG_DIR="$PPT_CONFIG_DIR" \
+  PPT_REPO_URL="$PPT_REPO_URL" \
+  PYTHONPATH="$extract_dir/src${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 -m ppt install \
+    --repo "$PPT_REPO_URL" \
+    --version "$PPT_VERSION" \
+    --asset-name "$asset_name" \
+    --asset-url "$asset_url" \
+    --from-dir "$extract_dir" \
+    --shell-config "$shell_config"
+fi
