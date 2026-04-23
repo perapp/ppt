@@ -617,8 +617,13 @@ exec python3 -m ppt \"$@\"
         launcher = paths.bin_dir / "ppt"
         replace_symlink(source, launcher)
 
-    # Seed config + lock so ppt can manage itself.
-    config = [PackageConfig(repo=repo, locked=version)]
+    # Ensure ppt is present in config. If the user already has a config,
+    # do not overwrite it.
+    config = read_config_file(paths.config_file)
+    config = upsert_config(config, PackageConfig(repo=normalize_repo_url(repo), locked=version))
+    entry = get_config_entry(config, normalize_repo_url(repo))
+    # Installer version should become the locked version for ppt itself.
+    entry.locked = version
     write_config_file(paths.config_file, config)
 
     state = {
