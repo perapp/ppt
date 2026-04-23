@@ -76,18 +76,113 @@ def test_install_script_works_in_minimal_ubuntu_container() -> None:
         with tempfile.TemporaryDirectory() as asset_td:
             tmp = Path(asset_td)
             (tmp / "bin").mkdir(parents=True)
-            (tmp / "src").mkdir(parents=True)
+            (tmp / "python" / "bin").mkdir(parents=True)
+            (tmp / "venv" / "site-packages").mkdir(parents=True)
+
+            # Stub "bundled" python.
+            py = tmp / "python" / "bin" / "python3"
+            py.write_text(
+                """#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "$@"
+""",
+                encoding="utf-8",
+            )
+            py.chmod(0o755)
+
+            # Bundle ppt sources into venv/site-packages.
+            shutil.copytree(repo_root / "src" / "ppt", tmp / "venv" / "site-packages" / "ppt")
+
+            # Stub rich so imports work in a minimal container.
+            rich_dir = tmp / "venv" / "site-packages" / "rich"
+            rich_dir.mkdir(parents=True, exist_ok=True)
+            (rich_dir / "__init__.py").write_text("from . import box\n", encoding="utf-8")
+            (rich_dir / "box.py").write_text("ASCII = object()\n", encoding="utf-8")
+            (rich_dir / "console.py").write_text(
+                """class Console:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def print(self, *args, **kwargs):
+        if args:
+            import builtins
+
+            builtins.print(*args)
+""",
+                encoding="utf-8",
+            )
+            (rich_dir / "progress.py").write_text(
+                """class SpinnerColumn: ...
+class TextColumn:
+    def __init__(self, *args, **kwargs):
+        pass
+
+class BarColumn:
+    def __init__(self, *args, **kwargs):
+        pass
+
+class TaskProgressColumn: ...
+class TimeElapsedColumn: ...
+
+class Progress:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def add_task(self, *args, **kwargs):
+        return 1
+
+    def update(self, *args, **kwargs):
+        pass
+
+    def advance(self, *args, **kwargs):
+        pass
+""",
+                encoding="utf-8",
+            )
+            (rich_dir / "table.py").write_text(
+                """class Table:
+    def __init__(self, *args, **kwargs):
+        self.rows = []
+
+    def add_column(self, *args, **kwargs):
+        pass
+
+    def add_row(self, *args, **kwargs):
+        self.rows.append(args)
+""",
+                encoding="utf-8",
+            )
+
+            # Launcher matches what we publish in GitLab release assets.
             launcher = tmp / "bin" / "ppt"
             launcher.write_text(
                 """#!/usr/bin/env bash
 set -euo pipefail
+
 SCRIPT_PATH="$0"
 if command -v readlink >/dev/null 2>&1; then
-  SCRIPT_PATH=$(readlink -f -- "$0" 2>/dev/null || printf '%s' "$0")
+  while [ -L "$SCRIPT_PATH" ]; do
+    base_dir=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")" && pwd)
+    link=$(readlink "$SCRIPT_PATH" || true)
+    if [ -z "$link" ]; then
+      break
+    fi
+    case "$link" in
+      /*) SCRIPT_PATH="$link" ;;
+      *) SCRIPT_PATH="$base_dir/$link" ;;
+    esac
+  done
 fi
-APP_DIR=$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")/.." && pwd)
-export PYTHONPATH="$APP_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
-exec python3 -m ppt "$@"
+
+APP_DIR=$(CDPATH= cd -- "$(dirname "$SCRIPT_PATH")/.." && pwd)
+export PYTHONPATH="$APP_DIR/venv/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+exec "$APP_DIR/python/bin/python3" -m ppt "$@"
 """,
                 encoding="utf-8",
             )
@@ -95,7 +190,8 @@ exec python3 -m ppt "$@"
 
             with tarfile.open(tarball, "w:gz") as tf:
                 tf.add(tmp / "bin", arcname="bin")
-                tf.add(repo_root / "src" / "ppt", arcname="src/ppt")
+                tf.add(tmp / "python", arcname="python")
+                tf.add(tmp / "venv", arcname="venv")
 
         env_flags = [
             "-e",

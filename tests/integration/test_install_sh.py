@@ -65,6 +65,74 @@ exec "$APP_DIR/python/bin/python3" -m ppt "$@"
         # Bundle ppt sources into "venv/site-packages".
         shutil.copytree(repo_root / "src" / "ppt", tmp / "venv" / "site-packages" / "ppt")
 
+        # Stub rich so the bundled sources can import it without network access.
+        # (The real release asset installs runtime deps into venv/site-packages.)
+        rich_dir = tmp / "venv" / "site-packages" / "rich"
+        rich_dir.mkdir(parents=True, exist_ok=True)
+        (rich_dir / "__init__.py").write_text("from . import box\n", encoding="utf-8")
+        (rich_dir / "box.py").write_text("ASCII = object()\n", encoding="utf-8")
+        (rich_dir / "console.py").write_text(
+            """class Console:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def print(self, *args, **kwargs):
+        # Keep output simple/stable for tests.
+        if args:
+            import builtins
+
+            builtins.print(*args)
+""",
+            encoding="utf-8",
+        )
+        (rich_dir / "progress.py").write_text(
+            """class SpinnerColumn: ...
+class TextColumn:
+    def __init__(self, *args, **kwargs):
+        pass
+
+class BarColumn:
+    def __init__(self, *args, **kwargs):
+        pass
+
+class TaskProgressColumn: ...
+class TimeElapsedColumn: ...
+
+class Progress:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def add_task(self, *args, **kwargs):
+        return 1
+
+    def update(self, *args, **kwargs):
+        pass
+
+    def advance(self, *args, **kwargs):
+        pass
+""",
+            encoding="utf-8",
+        )
+        (rich_dir / "table.py").write_text(
+            """class Table:
+    def __init__(self, *args, **kwargs):
+        self.rows = []
+
+    def add_column(self, *args, **kwargs):
+        pass
+
+    def add_row(self, *args, **kwargs):
+        self.rows.append(args)
+""",
+            encoding="utf-8",
+        )
+
         # Create tarball.
         with tarfile.open(out_path, "w:gz") as tf:
             tf.add(tmp / "bin", arcname="bin")
