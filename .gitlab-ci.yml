@@ -54,6 +54,10 @@ build_dist:x86_64-unknown-linux-gnu:
   image: rust:1.77-bookworm
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
@@ -74,6 +78,10 @@ build_dist:x86_64-unknown-linux-musl:
   image: rust:1.77-bookworm
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: manual
   script:
@@ -95,9 +103,16 @@ build_dist:aarch64-unknown-linux-gnu:
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
       when: manual
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
   script:
     - cargo install pyoxidizer --locked --version 0.24.0
-    - make dist VERSION="$CI_COMMIT_TAG" PPT_DIST_TARGETS="aarch64-unknown-linux-gnu"
+    - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
+    - make dist VERSION="$VERSION" PPT_DIST_TARGETS="aarch64-unknown-linux-gnu"
   artifacts:
     when: always
     expire_in: never
@@ -111,9 +126,16 @@ build_dist:aarch64-unknown-linux-musl:
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
       when: manual
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
   script:
     - cargo install pyoxidizer --locked --version 0.24.0
-    - make dist VERSION="$CI_COMMIT_TAG" PPT_DIST_TARGETS="aarch64-unknown-linux-musl"
+    - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
+    - make dist VERSION="$VERSION" PPT_DIST_TARGETS="aarch64-unknown-linux-musl"
   artifacts:
     when: always
     expire_in: never
@@ -127,9 +149,16 @@ build_dist:armv7-unknown-linux-gnueabihf:
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
       when: manual
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
   script:
     - cargo install pyoxidizer --locked --version 0.24.0
-    - make dist VERSION="$CI_COMMIT_TAG" PPT_DIST_TARGETS="armv7-unknown-linux-gnueabihf"
+    - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
+    - make dist VERSION="$VERSION" PPT_DIST_TARGETS="armv7-unknown-linux-gnueabihf"
   artifacts:
     when: always
     expire_in: never
@@ -143,9 +172,16 @@ build_dist:armv7-unknown-linux-musleabihf:
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
       when: manual
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
   script:
     - cargo install pyoxidizer --locked --version 0.24.0
-    - make dist VERSION="$CI_COMMIT_TAG" PPT_DIST_TARGETS="armv7-unknown-linux-musleabihf"
+    - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
+    - make dist VERSION="$VERSION" PPT_DIST_TARGETS="armv7-unknown-linux-musleabihf"
   artifacts:
     when: always
     expire_in: never
@@ -159,9 +195,16 @@ build_dist:x86_64-apple-darwin:
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
       when: manual
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
   script:
     - cargo install pyoxidizer --locked --version 0.24.0
-    - make dist VERSION="$CI_COMMIT_TAG" PPT_DIST_TARGETS="x86_64-apple-darwin"
+    - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
+    - make dist VERSION="$VERSION" PPT_DIST_TARGETS="x86_64-apple-darwin"
   artifacts:
     when: always
     expire_in: never
@@ -175,9 +218,16 @@ build_dist:aarch64-apple-darwin:
   rules:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v/'
       when: manual
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
   script:
     - cargo install pyoxidizer --locked --version 0.24.0
-    - make dist VERSION="$CI_COMMIT_TAG" PPT_DIST_TARGETS="aarch64-apple-darwin"
+    - VERSION="${CI_COMMIT_TAG:-v0.0.0-dev-${CI_COMMIT_SHORT_SHA}}"
+    - make dist VERSION="$VERSION" PPT_DIST_TARGETS="aarch64-apple-darwin"
   artifacts:
     when: always
     expire_in: never
