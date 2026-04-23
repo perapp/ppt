@@ -3,11 +3,15 @@ name = "ppt"
 version = "0.0.0"
 requires-python = ">=3.12"
 dependencies = [
-  "pytest",
-  "pydantic>=2",
   "ruamel.yaml>=0.18",
   "python-dotenv>=1",
   "rich>=13",
+]
+
+[dependency-groups]
+dev = [
+  "pytest",
+  "pydantic>=2",
 ]
 
 [tool.pytest.ini_options]
