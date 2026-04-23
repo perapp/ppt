@@ -19,7 +19,40 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from rich.console import Console
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
+from rich import box
+from rich.table import Table
+
 from . import __version__
+
+
+_CONSOLE: Console | None = None
+
+
+def console() -> Console:
+    global _CONSOLE
+    if _CONSOLE is None:
+        # Avoid ANSI escape codes in non-tty contexts (tests, piping).
+        _CONSOLE = Console(force_terminal=sys.stdout.isatty(), highlight=False)
+    return _CONSOLE
+
+
+def should_show_progress() -> bool:
+    return sys.stdout.isatty()
+
+
+def package_progress() -> Progress:
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(bar_width=None),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console(),
+        transient=True,
+        disable=not should_show_progress(),
+    )
 
 
 SUPPORTED_ARCHES = {
@@ -252,7 +285,7 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser.set_defaults(handler=cmd_list)
 
     info_parser = subparsers.add_parser("info", help="Show package details")
-    info_parser.add_argument("package")
+    info_parser.add_argument("packages", nargs="*")
     info_parser.add_argument(
         "--all-platforms",
         action="store_true",
@@ -399,7 +432,7 @@ _ppt() {
   fi
   case \"$cmd\" in
     remove|info)
-      if [ \"$COMP_CWORD\" -eq 2 ] && [[ \"$cur\" != -* ]]; then
+      if [ \"$COMP_CWORD\" -ge 2 ] && [[ \"$cur\" != -* ]]; then
         COMPREPLY=( $(ppt _complete packages --query \"$cur\") )
         return 0
       fi
@@ -488,7 +521,7 @@ _ppt() {
           _arguments '--check[Check only]' '--quiet[Suppress normal output for --check]'
           ;;
         remove|info)
-          if [[ $CURRENT -eq 3 && $PREFIX != -* ]]; then
+          if [[ $CURRENT -ge 3 && $PREFIX != -* ]]; then
             compadd -- ${(f)$(ppt _complete packages --query "$PREFIX")}
           fi
           ;;
@@ -750,26 +783,31 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
     messages: list[str] = []
     changed_config = False
-    for entry in config:
-        target_version = entry.constraint or entry.locked
-        if target_version is None:
-            release = fetch_release(entry.repo, None)
-            target_version = release["tag_name"]
 
-        # Keep config self-contained: always record locked.
-        if entry.locked != target_version:
-            entry.locked = target_version
-            changed_config = True
+    with package_progress() as progress:
+        task = progress.add_task("sync", total=len(config) or 1)
+        for entry in config:
+            progress.update(task, description=f"sync {owner_repo_name(entry.repo)}")
+            target_version = entry.constraint or entry.locked
+            if target_version is None:
+                release = fetch_release(entry.repo, None)
+                target_version = release["tag_name"]
 
-        message = install_package(paths, platform_info, entry, target_version, state)
-        if message:
-            messages.append(message)
+            # Keep config self-contained: always record locked.
+            if entry.locked != target_version:
+                entry.locked = target_version
+                changed_config = True
+
+            message = install_package(paths, platform_info, entry, target_version, state)
+            if message:
+                messages.append(message)
+            progress.advance(task)
 
     if changed_config:
         write_config_file(paths.config_file, config)
     write_state(paths.state_file, state)
     for message in messages:
-        print(message)
+        console().print(message)
     return 0
 
 
@@ -838,36 +876,45 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         for raw in args.packages:
             selected.add(resolve_package_ref(raw, config))
 
+    selected_entries = [entry for entry in config if not selected or entry.repo in selected]
+
     messages: list[str] = []
     changed_config = False
-    for entry in config:
-        if selected and entry.repo not in selected:
-            continue
-        if entry.constraint:
-            messages.append(f"skipped constrained package {entry.repo} ({entry.constraint})")
-            continue
-        repo_state = state.get(entry.repo, {})
-        target_version = (repo_state.get("available_version") or "").strip() or None
-        if target_version is None:
-            release = fetch_release(entry.repo, None)
-            target_version = release["tag_name"]
-            repo_state = state.setdefault(entry.repo, {})
-            repo_state["latest_version"] = target_version
-            repo_state["available_version"] = target_version
-            repo_state["available_updated_at"] = int(time.time())
-        previous = entry.locked
-        if previous != target_version:
-            changed_config = True
-            entry.locked = target_version
-        message = install_package(paths, platform_info, entry, target_version, state)
-        if message:
-            messages.append(message)
+    with package_progress() as progress:
+        task = progress.add_task("upgrade", total=len(selected_entries) or 1)
+        for entry in selected_entries:
+            progress.update(task, description=f"upgrade {owner_repo_name(entry.repo)}")
+            if entry.constraint:
+                messages.append(
+                    f"skipped constrained package {entry.repo} ({entry.constraint})"
+                )
+                progress.advance(task)
+                continue
+
+            repo_state = state.get(entry.repo, {})
+            target_version = (repo_state.get("available_version") or "").strip() or None
+            if target_version is None:
+                release = fetch_release(entry.repo, None)
+                target_version = release["tag_name"]
+                repo_state = state.setdefault(entry.repo, {})
+                repo_state["latest_version"] = target_version
+                repo_state["available_version"] = target_version
+                repo_state["available_updated_at"] = int(time.time())
+
+            previous = entry.locked
+            if previous != target_version:
+                changed_config = True
+                entry.locked = target_version
+            message = install_package(paths, platform_info, entry, target_version, state)
+            if message:
+                messages.append(message)
+            progress.advance(task)
 
     if changed_config:
         write_config_file(paths.config_file, config)
     write_state(paths.state_file, state)
     for message in messages:
-        print(message)
+        console().print(message)
     return 0
 
 
@@ -958,44 +1005,87 @@ def cmd_info(args: argparse.Namespace) -> int:
     paths = ensure_layout()
     config = read_config_file(paths.config_file)
     state = read_state(paths.state_file)
-    repo = resolve_package_ref(args.package, config)
-    entry = get_config_entry(config, repo)
-    repo_state = state.get(repo, {})
 
-    print(f"repo: {repo}")
-    print(f"package: {display_name(repo)}")
-    print(f"constraint: {entry.constraint or '-'}")
-    print(f"locked: {entry.locked or '-'}")
+    repos: list[str] = []
+    if args.packages:
+        for raw in args.packages:
+            repos.append(resolve_package_ref(raw, config))
+    else:
+        repos = [entry.repo for entry in sorted(config, key=lambda item: owner_repo_name(item.repo))]
+
+    if not repos:
+        print("no packages configured")
+        return 0
+
+    first = True
+    for repo in repos:
+        entry = get_config_entry(config, repo)
+        repo_state = state.get(repo, {})
+        if not first:
+            console().print()
+        first = False
+        _print_package_info_markdown(repo, entry, repo_state, args)
+    return 0
+
+
+def _print_package_info_markdown(repo: str, entry: PackageConfig, repo_state: dict, args: argparse.Namespace) -> None:
+    # Rich output for terminal readability.
+    console().print(f"# {repo}")
+    console().print()
+
     available = (repo_state.get("available_version") or "-").strip() or "-"
     latest = (repo_state.get("latest_version") or "-").strip() or "-"
-    print(f"available: {available}")
-    print(f"latest: {latest}")
-    print(f"installed: {repo_state.get('installed_version', '-')}")
-
+    installed = repo_state.get("installed_version", "-")
     installed_asset = (repo_state.get("asset_name") or "-").strip() or "-"
-    print(f"installed asset: {installed_asset}")
-    print(f"status: {repo_state.get('status', 'configured')}")
-    print(f"prefix: {entry.prefix if entry.prefix is not None else ''}")
-    if repo_state.get("message"):
-        print(f"message: {repo_state['message']}")
-    if repo_state.get("bin_links"):
-        print("bin links:")
-        for item in repo_state["bin_links"]:
-            print(f"  {item}")
+    status = repo_state.get("status", "configured")
+    prefix = entry.prefix if entry.prefix is not None else ""
 
-    if args.all_platforms:
-        locked_version = (entry.locked or "").strip()
-        if not locked_version:
-            raise PptError(f"missing locked version for {repo}; run `ppt sync`")
+    rows = [
+        ("package", display_name(repo)),
+        ("constraint", entry.constraint or "-"),
+        ("locked", entry.locked or "-"),
+        ("available", available),
+        ("latest", latest),
+        ("installed", installed),
+        ("installed asset", installed_asset),
+        ("status", status),
+        ("prefix", prefix),
+    ]
+    width = max(len(name) for name, _ in rows)
+    for name, value in rows:
+        console().print(f"{name.ljust(width)}  {value}")
 
-        release = fetch_release(repo, locked_version)
-        rows: list[list[str]] = []
-        for platform_info in INFO_PLATFORMS:
-            asset = select_asset(repo, release, platform_info)
-            rows.append([platform_info.key, asset["name"] if asset else "-"])
-        print("\nlocked assets:")
-        _print_table(["PLATFORM", "ASSET"], rows)
-    return 0
+    message = (repo_state.get("message") or "").strip()
+    if message:
+        console().print(f"message".ljust(width) + f"  {message}")
+
+    links = repo_state.get("bin_links") or []
+    if links:
+        console().print(f"bin links".ljust(width) + "  ")
+        for link in links:
+            console().print(" " * (width + 2) + f"{link}")
+
+    if not args.all_platforms:
+        return
+
+    locked_version = (entry.locked or "").strip()
+    if not locked_version:
+        console().print("\nlocked assets:\n")
+        console().print("(missing locked version; run `ppt sync`)")
+        return
+
+    release = fetch_release(repo, locked_version)
+    rows: list[list[str]] = []
+    for platform_info in INFO_PLATFORMS:
+        asset = select_asset(repo, release, platform_info)
+        rows.append([platform_info.key, asset["name"] if asset else "-"])
+    console().print("\nlocked assets:\n")
+    table = Table(show_header=True, header_style=None, box=box.ASCII)
+    table.add_column("PLATFORM", no_wrap=True)
+    table.add_column("ASSET")
+    for platform_key, asset_name in rows:
+        table.add_row(platform_key, asset_name)
+    console().print(table)
 
 
 def cmd_platform(_args: argparse.Namespace) -> int:
@@ -1014,40 +1104,45 @@ def cmd_update(args: argparse.Namespace) -> int:
         for raw in args.packages:
             selected.add(resolve_package_ref(raw, config))
 
+    selected_entries = [entry for entry in config if not selected or entry.repo in selected]
+
     messages: list[str] = []
-    for entry in config:
-        if selected and entry.repo not in selected:
-            continue
+    with package_progress() as progress:
+        task = progress.add_task("update", total=len(selected_entries) or 1)
+        for entry in selected_entries:
+            progress.update(task, description=f"update {owner_repo_name(entry.repo)}")
+            repo_state = state.setdefault(entry.repo, {})
+            try:
+                latest_release = fetch_release(entry.repo, None)
+                latest = (latest_release.get("tag_name") or "").strip()
+                if not latest:
+                    raise PptError(f"failed to resolve latest release for {entry.repo}")
+                repo_state["latest_version"] = latest
 
-        repo_state = state.setdefault(entry.repo, {})
-        try:
-            latest_release = fetch_release(entry.repo, None)
-            latest = (latest_release.get("tag_name") or "").strip()
-            if not latest:
-                raise PptError(f"failed to resolve latest release for {entry.repo}")
-            repo_state["latest_version"] = latest
+                if entry.constraint:
+                    constrained_release = fetch_release(entry.repo, entry.constraint)
+                    available = (constrained_release.get("tag_name") or entry.constraint).strip()
+                else:
+                    available = latest
 
-            if entry.constraint:
-                constrained_release = fetch_release(entry.repo, entry.constraint)
-                available = (constrained_release.get("tag_name") or entry.constraint).strip()
-            else:
-                available = latest
-
-            repo_state["available_version"] = available
-            repo_state["available_updated_at"] = int(time.time())
-            repo_state.pop("available_error", None)
-            messages.append(
-                f"updated {owner_repo_name(entry.repo)}: available {available} (latest {latest})"
-            )
-        except Exception as exc:
-            # Keep going; a single package failing shouldn't block others.
-            repo_state["available_error"] = str(exc)
-            repo_state["available_updated_at"] = int(time.time())
-            messages.append(f"warning: failed to update {owner_repo_name(entry.repo)}: {exc}")
+                repo_state["available_version"] = available
+                repo_state["available_updated_at"] = int(time.time())
+                repo_state.pop("available_error", None)
+                messages.append(
+                    f"updated {owner_repo_name(entry.repo)}: available {available} (latest {latest})"
+                )
+            except Exception as exc:
+                # Keep going; a single package failing shouldn't block others.
+                repo_state["available_error"] = str(exc)
+                repo_state["available_updated_at"] = int(time.time())
+                messages.append(
+                    f"warning: failed to update {owner_repo_name(entry.repo)}: {exc}"
+                )
+            progress.advance(task)
 
     write_state(paths.state_file, state)
     for msg in messages:
-        print(msg)
+        console().print(msg)
     return 0
 
 

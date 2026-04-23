@@ -214,8 +214,10 @@ class TestCliFlows(CliTestCase):
         code, stdout, stderr = self.run_ppt("info", "neovim")
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
-        self.assertIn("available: v2.0.0", stdout)
-        self.assertIn("latest: v2.0.0", stdout)
+        self.assertIn("# https://github.com/neovim/neovim", stdout)
+        self.assertIn("available", stdout)
+        self.assertIn("v2.0.0", stdout)
+        self.assertIn("latest", stdout)
 
     def test_info_all_platforms_shows_asset_matrix_for_locked_version(self) -> None:
         repo = "https://github.com/neovim/neovim"
@@ -225,12 +227,27 @@ class TestCliFlows(CliTestCase):
         code, stdout, stderr = self.run_ppt("info", "neovim", "--all-platforms")
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
+        self.assertIn("# https://github.com/neovim/neovim", stdout)
         self.assertIn("locked assets:", stdout)
         self.assertIn("PLATFORM", stdout)
         self.assertIn("ASSET", stdout)
         self.assertIn("x86_64-unknown-linux-gnu", stdout)
         # At least one platform should match the linux asset in the fake store.
         self.assertIn("neovim-v1.0.0-linux-x86_64.tar.gz", stdout)
+
+    def test_info_without_args_shows_all_configured_packages(self) -> None:
+        repo1 = "https://github.com/neovim/neovim"
+        repo2 = "https://github.com/sharkdp/bat"
+        self.releases.add_release(repo1, "v1.0.0", {"nvim": "#!/bin/sh\necho nvim v1\n"})
+        self.releases.add_release(repo2, "v0.1.0", {"bat": "#!/bin/sh\necho bat\n"})
+        self.run_ppt("add", repo1)
+        self.run_ppt("add", repo2)
+
+        code, stdout, stderr = self.run_ppt("info")
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn(f"# {repo1}", stdout)
+        self.assertIn(f"# {repo2}", stdout)
 
     def test_list_default_only_shows_installed(self) -> None:
         (self.config / "packages.toml").write_text(
