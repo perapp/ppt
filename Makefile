@@ -45,7 +45,14 @@ SANDBOX_TARBALL := $(DIST_DIR)/ppt-sandbox-linux.tar.gz
 INSTALL_SH := $(DIST_DIR)/install.sh
 
 INSTALL_TEMPLATE := install.sh.template
-REPO_URL ?= $(shell if [ -n "$$CI_PROJECT_URL" ]; then echo "$$CI_PROJECT_URL"; else echo "https://gitlab.com/perapp/ppt"; fi)
+REPO_URL ?= $(shell \
+	if [ -n "$$CI_PROJECT_URL" ]; then \
+	  echo "$$CI_PROJECT_URL"; \
+	elif [ -n "$$GITHUB_SERVER_URL" ] && [ -n "$$GITHUB_REPOSITORY" ]; then \
+	  echo "$$GITHUB_SERVER_URL/$$GITHUB_REPOSITORY"; \
+	else \
+	  echo "https://gitlab.com/perapp/ppt"; \
+	fi)
 
 help:
 	@printf '%s\n' \
