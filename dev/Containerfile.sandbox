@@ -13,7 +13,7 @@ RUN apt-get update -qq && apt-get install -y \
     sudo \
     python3 
 
-# Packages for compiling C source packages
+# Packages for compiling source packages
 RUN apt-get install -y coreutils sed git build-essential lowdown git make gcc g++ locales
 
 RUN adduser --disabled-password --gecos '' user
@@ -27,8 +27,16 @@ USER user
 ENV HOME=/home/user
 WORKDIR $HOME
 
+# Packages for compiling Rust source packages
+ENV PATH=$HOME/.cargo/bin:${PATH}
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
 # Use a locally-built release asset from the mounted workspace.
 ENV PPT_INSTALL_ASSET_URL=file:///workspace/dist/ppt-sandbox-linux.tar.gz
 
+COPY dev/packages.toml /tmp/
+
 # Mimic README install command, then drop into an interactive shell.
-CMD ["bash", "-lc", "curl -fsSL file:///workspace/dist/install.sh | bash -s -- --shell-config yes && exec bash -li"]
+CMD ["bash", "-lc", "curl -fsSL file:///workspace/dist/install.sh | bash -s -- --shell-config yes && cat /tmp/packages.toml >> .config/ppt/packages.toml && .local/ppt/bin/ppt sync && exec bash -li"]
+
+

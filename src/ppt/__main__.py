@@ -1068,21 +1068,23 @@ def _print_package_info_markdown(repo: str, entry: PackageConfig, repo_state: di
 
     links = repo_state.get("bin_links") or []
     if links:
-        console().print(f"bin links".ljust(width) + "  ")
+        console().print()
+        console().print("## Bin links")
+        console().print()
         for link in links:
-            console().print(" " * (width + 2) + f"{link}")
+            console().print(f"  - {link}")
 
     if not args.all_platforms:
         return
 
     locked_version = (entry.locked or "").strip()
     if not locked_version:
-        console().print("\nlocked assets:\n")
+        console().print("\n## Locked assets\n")
         console().print("(missing locked version; run `ppt sync`)")
         return
 
     if is_commit_hash(locked_version):
-        console().print("\nlocked assets:\n")
+        console().print("\n## Locked assets\n")
         console().print("(source build; no release assets)")
         return
 
@@ -1091,7 +1093,7 @@ def _print_package_info_markdown(repo: str, entry: PackageConfig, repo_state: di
     for platform_info in INFO_PLATFORMS:
         asset = select_asset(repo, release, platform_info)
         rows.append([platform_info.key, asset["name"] if asset else "-"])
-    console().print("\nlocked assets:\n")
+    console().print("\n## Locked assets\n")
     table = Table(show_header=True, header_style=None, box=box.ASCII)
     table.add_column("PLATFORM", no_wrap=True)
     table.add_column("ASSET")
@@ -1733,7 +1735,7 @@ def source_tarball_urls(repo: str, tag: str) -> list[str]:
         ]
 
     # GitLab style.
-    project = owner_repo.split("/")[-1]
+    project = owner_repo_name(repo).split("/")[-1]
     return [
         f"{repo}/-/archive/{quoted_tag}/{project}-{quoted_tag}.tar.gz",
     ]
@@ -1818,7 +1820,7 @@ def prepare_source_tree(
 
 
 def build_from_source(src_dir: Path, out_dir: Path) -> None:
-    patterns = [build_pattern_gnu_make]
+    patterns = [build_pattern_rust_cargo, build_pattern_gnu_make]
     for pattern in patterns:
         try:
             supported = bool(pattern(src_dir, out_dir, True))
@@ -1830,6 +1832,24 @@ def build_from_source(src_dir: Path, out_dir: Path) -> None:
                 raise PptError(f"failed to build {src_dir} using {pattern.__name__}")
             return
     raise PptError(f"no supported source build pattern for {src_dir}")
+
+
+def build_pattern_rust_cargo(src_dir: Path, out_dir: Path, verify: bool) -> bool:
+    """Build pattern for Rust projects with a Cargo manifest."""
+
+    manifest = src_dir / "Cargo.toml"
+    if verify:
+        return manifest.exists()
+
+    if shutil.which("cargo") is None:
+        raise PptError("cargo is required for Rust source builds")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    argv = ["cargo", "install", "--path", str(src_dir), "--root", str(out_dir), "--force"]
+    if (src_dir / "Cargo.lock").exists():
+        argv.append("--locked")
+    _run_checked(argv, cwd=src_dir)
+    return True
 
 
 def build_pattern_gnu_make(src_dir: Path, out_dir: Path, verify: bool) -> bool:

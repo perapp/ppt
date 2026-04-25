@@ -232,6 +232,8 @@ class TestCliFlows(CliTestCase):
         self.assertIn("available", stdout)
         self.assertIn("v2.0.0", stdout)
         self.assertIn("latest", stdout)
+        self.assertIn("## Bin links", stdout)
+        self.assertIn(f"  - {self.home / 'bin' / 'nvim'}", stdout)
 
     def test_info_all_platforms_shows_asset_matrix_for_locked_version(self) -> None:
         repo = "https://github.com/neovim/neovim"
@@ -242,7 +244,7 @@ class TestCliFlows(CliTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         self.assertIn("# https://github.com/neovim/neovim", stdout)
-        self.assertIn("locked assets:", stdout)
+        self.assertIn("## Locked assets", stdout)
         self.assertIn("PLATFORM", stdout)
         self.assertIn("ASSET", stdout)
         self.assertIn("x86_64-unknown-linux-gnu", stdout)
@@ -333,6 +335,57 @@ class TestUnlistedPackages(CliTestCase):
         self.assertEqual(stderr, "")
         self.assertIn("installed hello v1.0.0", stdout)
         self.assertTrue((self.home / "bin" / "hello").is_symlink())
+
+
+class TestSourceBuilds(unittest.TestCase):
+    def test_build_from_source_supports_rust_cargo_projects(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            src = root / "src"
+            out = root / "out"
+            fake_bin = root / "fake-bin"
+            log = root / "cargo-args.txt"
+            src.mkdir()
+            fake_bin.mkdir()
+            (src / "Cargo.toml").write_text(
+                '[package]\nname = "ripgrep"\nversion = "0.1.0"\nedition = "2021"\n',
+                encoding="utf-8",
+            )
+            (src / "Cargo.lock").write_text("# lock\n", encoding="utf-8")
+            cargo = fake_bin / "cargo"
+            cargo.write_text(
+                """#!/usr/bin/env sh
+set -eu
+printf '%s\n' "$*" > "$PPT_FAKE_CARGO_LOG"
+root=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --root) root="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$root/bin"
+printf '#!/usr/bin/env sh\necho rg\n' > "$root/bin/rg"
+chmod 755 "$root/bin/rg"
+""",
+                encoding="utf-8",
+            )
+            cargo.chmod(0o755)
+
+            env = {
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                "PPT_FAKE_CARGO_LOG": str(log),
+            }
+            with patch.dict(os.environ, env, clear=False):
+                ppt_main.build_from_source(src, out)
+
+            self.assertTrue((out / "bin" / "rg").exists())
+            args = log.read_text(encoding="utf-8")
+            self.assertIn("install --path", args)
+            self.assertIn(str(src), args)
+            self.assertIn("--root", args)
+            self.assertIn(str(out), args)
+            self.assertIn("--locked", args)
 
 
 if __name__ == "__main__":
