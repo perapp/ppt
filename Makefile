@@ -13,6 +13,7 @@ SANDBOX_VOLUME := $(CURDIR):/workspace$(if $(filter podman,$(RUNTIME)),:Z,)
 
 DIST_DIR := dist
 DIST_DIR_STAMP := $(DIST_DIR)/.dir.stamp
+PYTHON_SOURCES := $(shell find src/ppt -type f -name '*.py' | sort)
 
 # Standard install variables.
 DESTDIR ?=
@@ -68,7 +69,7 @@ $(DIST_DIR_STAMP):
 	@mkdir -p "$(DIST_DIR)"
 	@touch "$(DIST_DIR_STAMP)"
 
-$(DIST_DIR)/ppt-$(VERSION)-%.tar.gz: | $(DIST_DIR_STAMP)
+$(DIST_DIR)/ppt-$(VERSION)-%.tar.gz: dev/build_dist.py pyproject.toml $(PYTHON_SOURCES) | $(DIST_DIR_STAMP)
 	@set -euo pipefail; \
 	target="$*"; \
 	python3 dev/build_dist.py \

@@ -133,6 +133,20 @@ class TestCliFlows(CliTestCase):
         self.assertIn('locked = "v1.0.0"', (self.config / "packages.toml").read_text())
         self.assert_link_target_contains(self.home / "bin" / "nvim", "v1.0.0")
 
+    def test_add_accepts_constraint_and_prefix_short_options(self) -> None:
+        repo = "https://github.com/neovim/neovim"
+        self.releases.add_release(repo, "v1.0.0", {"nvim": "#!/bin/sh\necho nvim v1\n"})
+
+        code, stdout, stderr = self.run_ppt("add", repo, "-c", "v1.0.0", "-p", "src-")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("installed neovim v1.0.0", stdout)
+        config = (self.config / "packages.toml").read_text()
+        self.assertIn('constraint = "v1.0.0"', config)
+        self.assertIn('prefix = "src-"', config)
+        self.assert_link_target_contains(self.home / "bin" / "src-nvim", "v1.0.0")
+
     def test_prefix_relinks_existing_install(self) -> None:
         repo = "https://github.com/neovim/neovim"
         self.releases.add_release(repo, "v1.0.0", {"nvim": "#!/bin/sh\necho nvim v1\n"})

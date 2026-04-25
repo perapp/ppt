@@ -136,6 +136,7 @@ class AppPaths:
     config_dir: Path
     cache_dir: Path
     packages_dir: Path
+    src_dir: Path
     bin_dir: Path
     state_file: Path
     config_file: Path
@@ -204,11 +205,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_parser = subparsers.add_parser("add", help="Add a package and install it")
     add_parser.add_argument("repo")
     add_parser.add_argument(
+        "-c",
         "--constraint",
         dest="constraint",
-        help="Exact version constraint (release tag).",
+        help="Constraint to lock against (release tag or git ref like a branch).",
     )
-    add_parser.add_argument("--prefix", dest="prefix")
+    add_parser.add_argument("-p", "--prefix", dest="prefix")
     add_parser.set_defaults(handler=cmd_add)
 
     install_parser = subparsers.add_parser("install", help="Install ppt into your home directory")
@@ -460,7 +462,7 @@ _ppt() {
       COMPREPLY=()
       ;;
     add)
-      COMPREPLY=( $(compgen -W '--constraint --prefix' -- \"$cur\") )
+      COMPREPLY=( $(compgen -W '-c --constraint -p --prefix' -- \"$cur\") )
       ;;
     sync)
       COMPREPLY=( $(compgen -W '--check --quiet' -- \"$cur\") )
@@ -515,7 +517,7 @@ _ppt() {
     args)
       case $words[2] in
         add)
-          _arguments '--constraint=[Exact version constraint]' '--prefix=[Command prefix]'
+          _arguments '(-c --constraint)'{-c,--constraint}'=[Exact version constraint]' '(-p --prefix)'{-p,--prefix}'=[Command prefix]'
           ;;
         sync)
           _arguments '--check[Check only]' '--quiet[Suppress normal output for --check]'
@@ -573,8 +575,8 @@ complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgra
 complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade update list info platform" -a info -d "Show package details"
 complete -c ppt -n "not __fish_seen_subcommand_from add remove prefix sync upgrade update list info platform" -a platform -d "Print current platform identifier"
 
-complete -c ppt -n "__fish_seen_subcommand_from add" -l constraint -r -d "Exact version constraint"
-complete -c ppt -n "__fish_seen_subcommand_from add" -l prefix -r -d "Command prefix"
+complete -c ppt -n "__fish_seen_subcommand_from add" -s c -l constraint -r -d "Exact version constraint"
+complete -c ppt -n "__fish_seen_subcommand_from add" -s p -l prefix -r -d "Command prefix"
 complete -c ppt -n "__fish_seen_subcommand_from sync" -l check -d "Check only"
 complete -c ppt -n "__fish_seen_subcommand_from sync" -l quiet -d "Suppress normal output for --check"
 
@@ -597,10 +599,7 @@ def cmd_add(args: argparse.Namespace) -> int:
     config = upsert_config(config, config_entry)
 
     entry = get_config_entry(config, repo)
-    target_version = entry.constraint or entry.locked
-    if target_version is None:
-        release = fetch_release(repo, None)
-        target_version = release["tag_name"]
+    target_version = resolve_entry_locked_version(entry, repo_state=state.get(repo, {}))
     entry.locked = target_version
     write_config_file(paths.config_file, config)
 
@@ -790,15 +789,17 @@ def cmd_sync(args: argparse.Namespace) -> int:
         task = progress.add_task("sync", total=len(config) or 1)
         for entry in config:
             progress.update(task, description=f"sync {owner_repo_name(entry.repo)}")
-            target_version = entry.constraint or entry.locked
-            if target_version is None:
-                release = fetch_release(entry.repo, None)
-                target_version = release["tag_name"]
-
-            # Keep config self-contained: always record locked.
-            if entry.locked != target_version:
-                entry.locked = target_version
-                changed_config = True
+            if entry.constraint:
+                target_version = resolve_entry_locked_version(entry, repo_state=state.get(entry.repo, {}))
+                if entry.locked != target_version:
+                    entry.locked = target_version
+                    changed_config = True
+            else:
+                target_version = (entry.locked or "").strip()
+                if not target_version:
+                    target_version = resolve_entry_locked_version(entry, repo_state=state.get(entry.repo, {}))
+                    entry.locked = target_version
+                    changed_config = True
 
             message = install_package(paths, platform_info, entry, target_version, state)
             if message:
@@ -827,15 +828,13 @@ def sync_needed_reasons(
             reasons.append(f"remove unmanaged package {repo}")
 
     for entry in config:
-        target_version = entry.constraint or entry.locked
+        target_version = (entry.locked or "").strip() or None
         if target_version is None:
             reasons.append(f"missing locked version for {entry.repo}")
             continue
 
         repo_state = state.get(entry.repo, {})
         if is_current_install(paths, entry, target_version, repo_state):
-            continue
-        if is_current_unavailable(platform_info, target_version, repo_state):
             continue
 
         if repo_state.get("status") == "installed":
@@ -894,14 +893,20 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 continue
 
             repo_state = state.get(entry.repo, {})
-            target_version = (repo_state.get("available_version") or "").strip() or None
-            if target_version is None:
-                release = fetch_release(entry.repo, None)
-                target_version = release["tag_name"]
-                repo_state = state.setdefault(entry.repo, {})
-                repo_state["latest_version"] = target_version
-                repo_state["available_version"] = target_version
-                repo_state["available_updated_at"] = int(time.time())
+            # For git-based installs (no releases), upgrade means "latest HEAD".
+            if is_commit_hash((entry.locked or "").strip()):
+                target_version = resolve_git_ref(entry.repo, "HEAD")
+            else:
+                target_version = (repo_state.get("available_version") or "").strip() or None
+                if target_version is None:
+                    release = fetch_release(entry.repo, None)
+                    target_version = (release.get("tag_name") or "").strip()
+                    if not target_version:
+                        raise PptError(f"failed to resolve latest release for {entry.repo}")
+                    repo_state = state.setdefault(entry.repo, {})
+                    repo_state["latest_version"] = target_version
+                    repo_state["available_version"] = target_version
+                    repo_state["available_updated_at"] = int(time.time())
 
             previous = entry.locked
             if previous != target_version:
@@ -1076,6 +1081,11 @@ def _print_package_info_markdown(repo: str, entry: PackageConfig, repo_state: di
         console().print("(missing locked version; run `ppt sync`)")
         return
 
+    if is_commit_hash(locked_version):
+        console().print("\nlocked assets:\n")
+        console().print("(source build; no release assets)")
+        return
+
     release = fetch_release(repo, locked_version)
     rows: list[list[str]] = []
     for platform_info in INFO_PLATFORMS:
@@ -1115,15 +1125,26 @@ def cmd_update(args: argparse.Namespace) -> int:
             progress.update(task, description=f"update {owner_repo_name(entry.repo)}")
             repo_state = state.setdefault(entry.repo, {})
             try:
-                latest_release = fetch_release(entry.repo, None)
-                latest = (latest_release.get("tag_name") or "").strip()
+                latest = ""
+                try:
+                    latest_release = fetch_release(entry.repo, None)
+                    latest = (latest_release.get("tag_name") or "").strip()
+                except PptError as exc:
+                    if "no release found" not in str(exc):
+                        raise
+                    latest = resolve_git_ref(entry.repo, "HEAD")
                 if not latest:
-                    raise PptError(f"failed to resolve latest release for {entry.repo}")
+                    raise PptError(f"failed to resolve latest version for {entry.repo}")
                 repo_state["latest_version"] = latest
 
                 if entry.constraint:
-                    constrained_release = fetch_release(entry.repo, entry.constraint)
-                    available = (constrained_release.get("tag_name") or entry.constraint).strip()
+                    try:
+                        constrained_release = fetch_release(entry.repo, entry.constraint)
+                        available = (constrained_release.get("tag_name") or entry.constraint).strip()
+                    except PptError as exc:
+                        if "release tag" not in str(exc) or "not found" not in str(exc):
+                            raise
+                        available = resolve_git_ref(entry.repo, entry.constraint)
                 else:
                     available = latest
 
@@ -1153,10 +1174,11 @@ def ensure_layout() -> AppPaths:
     config_dir = Path(os.environ.get("PPT_CONFIG_DIR", Path.home() / ".config" / "ppt"))
     cache_dir = home / "cache"
     packages_dir = home / "packages"
+    src_dir = home / "src"
     bin_dir = home / "bin"
     state_file = home / "state.json"
     config_file = config_dir / "packages.toml"
-    for directory in (home, config_dir, cache_dir, packages_dir, bin_dir):
+    for directory in (home, config_dir, cache_dir, packages_dir, src_dir, bin_dir):
         directory.mkdir(parents=True, exist_ok=True)
     if not state_file.exists():
         state_file.write_text("{}\n", encoding="utf-8")
@@ -1167,6 +1189,7 @@ def ensure_layout() -> AppPaths:
         config_dir=config_dir,
         cache_dir=cache_dir,
         packages_dir=packages_dir,
+        src_dir=src_dir,
         bin_dir=bin_dir,
         state_file=state_file,
         config_file=config_file,
@@ -1242,22 +1265,24 @@ def install_package(
     if can_relink_current_install(paths, entry, version, repo_state):
         relink_installed_package(paths, entry.repo, entry, repo_state)
         return f"relinked {display_name(entry.repo)} {version}"
-    if is_current_unavailable(platform_info, version, repo_state):
-        return None
 
-    release = fetch_release(entry.repo, version)
-    asset = select_asset(entry.repo, release, platform_info)
+    # Git-based installs are locked to a commit hash and built from source.
+    if is_commit_hash(version):
+        return install_package_from_source(paths, platform_info, entry, version, state, release=None)
+
+    release: dict | None = None
+    asset: dict | None = None
+    try:
+        release = fetch_release(entry.repo, version)
+        asset = select_asset(entry.repo, release, platform_info)
+    except PptError:
+        # If the locked version isn't a release tag anymore, fall back to git.
+        release = None
+        asset = None
+
     if asset is None:
-        repo_state = state.setdefault(entry.repo, {})
-        repo_state.update(
-            {
-                "status": "unavailable",
-                "resolved_version": version,
-                "message": f"no release asset for {platform_info.key}",
-                "updated_at": int(time.time()),
-            }
-        )
-        return f"warning: {display_name(entry.repo)} {version} unavailable on {platform_info.key}"
+        # No binary asset for this platform. Fall back to source build.
+        return install_package_from_source(paths, platform_info, entry, version, state, release=release)
 
     package_dir = paths.packages_dir / package_slug(entry.repo) / version
     if package_dir.exists():
@@ -1285,6 +1310,54 @@ def install_package(
     }
     write_receipt(package_dir, entry.repo, version, asset, platform_info, bin_links)
     return f"installed {display_name(entry.repo)} {version}"
+
+
+def install_package_from_source(
+    paths: AppPaths,
+    platform_info: PlatformInfo,
+    entry: PackageConfig,
+    version: str,
+    state: dict,
+    *,
+    release: dict | None,
+) -> str:
+    """Install by fetching source and building into packages/.
+
+    Source trees are stored under ~/.local/ppt/src/<slug>/<version> in parallel
+    with ~/.local/ppt/packages/.
+    """
+
+    slug = package_slug(entry.repo)
+    src_store = paths.src_dir / slug / version
+    package_dir = paths.packages_dir / slug / version
+
+    src_root, source_asset = prepare_source_tree(paths, entry.repo, version, release=release, out_dir=src_store)
+
+    if package_dir.exists():
+        shutil.rmtree(package_dir)
+    package_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        build_from_source(src_root, package_dir)
+        bin_links = activate_binaries(paths, entry, version, package_dir, state)
+    except Exception:
+        if package_dir.exists():
+            shutil.rmtree(package_dir)
+        raise
+
+    state[entry.repo] = {
+        "status": "installed",
+        "resolved_version": version,
+        "installed_version": version,
+        "prefix": entry.prefix or "",
+        "bin_links": bin_links,
+        "package_dir": str(package_dir),
+        "asset_name": source_asset["name"],
+        "message": "",
+        "updated_at": int(time.time()),
+    }
+    write_receipt(package_dir, entry.repo, version, source_asset, platform_info, bin_links)
+    return f"installed {display_name(entry.repo)} {version} (source build)"
 
 
 def is_current_install(paths: AppPaths, entry: PackageConfig, version: str, repo_state: dict) -> bool:
@@ -1389,11 +1462,17 @@ def uninstall_package(paths: AppPaths, repo: str, state: dict) -> None:
         package_root = paths.packages_dir / package_slug(repo)
         if package_root.exists():
             shutil.rmtree(package_root)
+        src_root = paths.src_dir / package_slug(repo)
+        if src_root.exists():
+            shutil.rmtree(src_root)
         return
     remove_bin_links(paths, repo_state.get("bin_links", []))
     package_root = paths.packages_dir / package_slug(repo)
     if package_root.exists():
         shutil.rmtree(package_root)
+    src_root = paths.src_dir / package_slug(repo)
+    if src_root.exists():
+        shutil.rmtree(src_root)
 
 
 def remove_bin_links(paths: AppPaths, bin_links: list[str]) -> None:
@@ -1562,6 +1641,257 @@ def replace_symlink(target: Path, link_path: Path) -> None:
         temp_link.unlink()
     temp_link.symlink_to(target)
     os.replace(temp_link, link_path)
+
+
+def is_commit_hash(text: str) -> bool:
+    # Git commit hashes are usually shown as 7+ hex chars, with full hashes at 40.
+    return re.fullmatch(r"[0-9a-f]{7,40}", (text or "").strip().lower()) is not None
+
+
+def resolve_entry_locked_version(entry: PackageConfig, *, repo_state: dict) -> str:
+    """Resolve what `entry.locked` should be.
+
+    - If `constraint` matches a release tag: lock to the tag.
+    - If `constraint` doesn't match a release tag: treat it as a git ref and lock to a commit hash.
+    - If unconstrained: lock to latest release tag when available, otherwise HEAD commit hash.
+    """
+
+    if entry.constraint:
+        try:
+            release = fetch_release(entry.repo, entry.constraint)
+            tag = (release.get("tag_name") or entry.constraint).strip()
+            if not tag:
+                raise PptError(f"failed to resolve release tag {entry.constraint} for {entry.repo}")
+            return tag
+        except PptError as exc:
+            msg = str(exc)
+            if "release tag" in msg and "not found" in msg:
+                return resolve_git_ref(entry.repo, entry.constraint)
+            if "no release found" in msg:
+                return resolve_git_ref(entry.repo, entry.constraint)
+            raise
+
+    locked = (entry.locked or "").strip()
+    if locked:
+        return locked
+
+    try:
+        release = fetch_release(entry.repo, None)
+        tag = (release.get("tag_name") or "").strip()
+        if not tag:
+            raise PptError(f"failed to resolve latest release for {entry.repo}")
+        return tag
+    except PptError as exc:
+        if "no release found" in str(exc):
+            return resolve_git_ref(entry.repo, "HEAD")
+        raise
+
+
+def _run_checked(argv: list[str], *, cwd: Path | None = None) -> None:
+    try:
+        subprocess.run(argv, cwd=str(cwd) if cwd else None, check=True)
+    except FileNotFoundError as exc:
+        raise PptError(f"missing required program: {argv[0]}") from exc
+    except subprocess.CalledProcessError as exc:
+        raise PptError(f"command failed: {' '.join(argv)}") from exc
+
+
+def _run_capture(argv: list[str], *, cwd: Path | None = None) -> str:
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=str(cwd) if cwd else None,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise PptError(f"missing required program: {argv[0]}") from exc
+    except subprocess.CalledProcessError as exc:
+        raise PptError(f"command failed: {' '.join(argv)}") from exc
+    return (proc.stdout or "").strip()
+
+
+def resolve_git_ref(repo: str, ref: str) -> str:
+    # Use ls-remote so we can resolve without cloning.
+    out = _run_capture(["git", "ls-remote", repo, ref])
+    first = out.splitlines()[0] if out else ""
+    commit = first.split("\t", 1)[0].strip() if first else ""
+    if not is_commit_hash(commit):
+        raise PptError(f"failed to resolve git ref {ref!r} for {repo}")
+    return commit
+
+
+def source_tarball_urls(repo: str, tag: str) -> list[str]:
+    parsed = urllib.parse.urlparse(repo)
+    quoted_tag = urllib.parse.quote(tag, safe="")
+    if parsed.netloc == "github.com":
+        # Prefer the canonical refs/tags path.
+        return [
+            f"{repo}/archive/refs/tags/{quoted_tag}.tar.gz",
+            f"{repo}/archive/{quoted_tag}.tar.gz",
+        ]
+
+    # GitLab style.
+    project = owner_repo.split("/")[-1]
+    return [
+        f"{repo}/-/archive/{quoted_tag}/{project}-{quoted_tag}.tar.gz",
+    ]
+
+
+def _download_url_to_cache(cache_dir: Path, *, url: str, name: str) -> Path:
+    asset = {"name": name, "browser_download_url": url}
+    return download_asset(cache_dir, asset)
+
+
+def _extract_archive_flat(archive_path: Path, out_dir: Path) -> None:
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="ppt-src-extract-") as td:
+        extract_root = Path(td) / "extract"
+        extract_root.mkdir(parents=True)
+        extract_archive(archive_path, extract_root)
+
+        children = list(extract_root.iterdir())
+        only_dir = None
+        if len(children) == 1 and children[0].is_dir():
+            only_dir = children[0]
+
+        if only_dir is not None:
+            shutil.move(str(only_dir), out_dir)
+            return
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for child in children:
+            shutil.move(str(child), out_dir / child.name)
+
+
+def prepare_source_tree(
+    paths: AppPaths,
+    repo: str,
+    version: str,
+    *,
+    release: dict | None,
+    out_dir: Path,
+) -> tuple[Path, dict]:
+    """Prepare a source tree for a locked version.
+
+    Priority:
+    1. Download a source tarball (when `version` looks like a tag).
+    2. git fetch/checkout for tags/branches/commits.
+    """
+
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    # Prio 1: "source" tarball.
+    if not is_commit_hash(version):
+        name = f"{display_name(repo)}-{version}-source.tar.gz"
+        for url in source_tarball_urls(repo, version):
+            try:
+                archive_path = _download_url_to_cache(paths.cache_dir, url=url, name=name)
+            except PptError:
+                continue
+            _extract_archive_flat(archive_path, out_dir)
+            return out_dir, {"name": name, "browser_download_url": url}
+
+    # Prio 2: git checkout.
+    with tempfile.TemporaryDirectory(prefix="ppt-src-git-") as td:
+        work = Path(td) / "repo"
+        if is_commit_hash(version):
+            # Commits can't be reliably shallow-fetched by hash across all servers.
+            _run_checked(["git", "clone", "--no-checkout", repo, str(work)])
+            _run_checked(["git", "-C", str(work), "checkout", "-q", version])
+        else:
+            _run_checked(["git", "init", str(work)])
+            _run_checked(["git", "-C", str(work), "remote", "add", "origin", repo])
+            _run_checked(["git", "-C", str(work), "fetch", "--depth", "1", "origin", version])
+            _run_checked(["git", "-C", str(work), "checkout", "-q", "FETCH_HEAD"])
+        commit = _run_capture(["git", "-C", str(work), "rev-parse", "HEAD"])
+        git_dir = work / ".git"
+        if git_dir.exists():
+            shutil.rmtree(git_dir)
+        shutil.move(str(work), out_dir)
+        return out_dir, {"name": f"git:{commit}", "browser_download_url": f"{repo}#{version}"}
+
+
+def build_from_source(src_dir: Path, out_dir: Path) -> None:
+    patterns = [build_pattern_gnu_make]
+    for pattern in patterns:
+        try:
+            supported = bool(pattern(src_dir, out_dir, True))
+        except Exception:
+            supported = False
+        if supported:
+            ok = bool(pattern(src_dir, out_dir, False))
+            if not ok:
+                raise PptError(f"failed to build {src_dir} using {pattern.__name__}")
+            return
+    raise PptError(f"no supported source build pattern for {src_dir}")
+
+
+def build_pattern_gnu_make(src_dir: Path, out_dir: Path, verify: bool) -> bool:
+    """Build pattern for GNU-style `make install` projects."""
+
+    has_makefile = (src_dir / "Makefile").exists() or (src_dir / "makefile").exists()
+    has_autogen = (src_dir / "autogen.sh").exists()
+    has_configure = (src_dir / "configure").exists()
+    if verify:
+        return bool(has_makefile or has_autogen or has_configure)
+
+    if shutil.which("make") is None:
+        raise PptError("make is required for source builds")
+
+    # Optional bootstrap.
+    if has_autogen:
+        _run_checked(["sh", "./autogen.sh"], cwd=src_dir)
+
+    # Optional configure.
+    if has_configure:
+        # Use prefix=/ so DESTDIR produces a clean tree under out_dir.
+        _run_checked(["sh", "./configure", "--prefix=/"], cwd=src_dir)
+
+    # `make install` must exist (at least after autogen/configure).
+    try:
+        proc = subprocess.run(
+            ["make", "-n", "install"],
+            cwd=str(src_dir),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        dry_run_text = f"{proc.stdout}\n{proc.stderr}"
+    except subprocess.CalledProcessError as exc:
+        raise PptError(f"source build does not support `make install`: {src_dir}") from exc
+
+    # Verify DESTDIR is honored before we run a real install.
+    sentinel = "/__ppt_destdir_sentinel__"
+    try:
+        proc = subprocess.run(
+            ["make", "-n", "install", f"DESTDIR={sentinel}", "PREFIX=/"],
+            cwd=str(src_dir),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        destdir_dry_run = f"{proc.stdout}\n{proc.stderr}"
+    except subprocess.CalledProcessError as exc:
+        raise PptError(f"failed to validate DESTDIR support for `make install`: {src_dir}") from exc
+
+    # Not perfect, but this catches the common (and dangerous) case where DESTDIR is ignored.
+    if sentinel not in destdir_dry_run:
+        raise PptError(
+            "`make install` does not appear to honor DESTDIR; refusing to run it. "
+            f"(project: {src_dir})"
+        )
+
+    _run_checked(["make"], cwd=src_dir)
+
+    # Many Makefile projects honor DESTDIR and optionally PREFIX.
+    _run_checked(["make", "install", f"DESTDIR={out_dir}", "PREFIX=/"], cwd=src_dir)
+    return True
 
 
 def fetch_release(repo: str, version: str | None) -> dict:

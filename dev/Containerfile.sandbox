@@ -1,7 +1,8 @@
-FROM ubuntu:24.04
+FROM ubuntu:25.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Packages for installing and running ppt
 RUN apt-get update -qq && apt-get install -y \
     adduser \
     bash \
@@ -11,6 +12,9 @@ RUN apt-get update -qq && apt-get install -y \
     gzip \
     sudo \
     python3 
+
+# Packages for compiling C source packages
+RUN apt-get install -y coreutils sed git build-essential lowdown git make gcc g++ locales
 
 RUN adduser --disabled-password --gecos '' user
 
