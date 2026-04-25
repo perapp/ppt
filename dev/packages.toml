@@ -1,6 +1,5 @@
 
 [[package]]
 repo = "https://github.com/sharkdp/bat"
-constraint = "master"
-locked = "93c52a4f88c55955d809ffd3af85eaa6887fbfd5"
+locked = "v0.26.1"
 

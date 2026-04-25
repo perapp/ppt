@@ -176,6 +176,58 @@ class TestCliFlows(CliTestCase):
         self.assertIn("installed neovim v2.0.0", stdout)
         self.assert_link_target_contains(self.home / "bin" / "src-nvim", "v2.0.0")
 
+    def test_sync_suspends_progress_while_installing(self) -> None:
+        repo = "https://github.com/neovim/neovim"
+        (self.config / "packages.toml").write_text(
+            '# Managed by ppt\n\n[[package]]\nrepo = "https://github.com/neovim/neovim"\nlocked = "v2.0.0"\n',
+            encoding="utf-8",
+        )
+
+        class FakeProgress:
+            def __init__(self) -> None:
+                self.running = True
+                self.events: list[str] = []
+
+            def __enter__(self) -> "FakeProgress":
+                return self
+
+            def __exit__(self, *exc: object) -> None:
+                self.running = False
+
+            def add_task(self, *_args: object, **_kwargs: object) -> int:
+                return 1
+
+            def update(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def advance(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def stop(self) -> None:
+                self.events.append("stop")
+                self.running = False
+
+            def start(self) -> None:
+                self.events.append("start")
+                self.running = True
+
+        progress = FakeProgress()
+        installing_states: list[bool] = []
+
+        def fake_install(*_args: object, **_kwargs: object) -> str:
+            installing_states.append(progress.running)
+            return "installed neovim v2.0.0"
+
+        with patch.object(ppt_main, "package_progress", return_value=progress):
+            with patch.object(ppt_main, "install_package", side_effect=fake_install):
+                code, stdout, stderr = self.run_ppt("sync")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assertIn("installed neovim v2.0.0", stdout)
+        self.assertEqual(installing_states, [False])
+        self.assertEqual(progress.events, ["stop", "start"])
+
     def test_upgrade_moves_unconstrained_package_to_new_release(self) -> None:
         repo = "https://github.com/neovim/neovim"
         self.releases.add_release(repo, "v1.0.0", {"nvim": "#!/bin/sh\necho nvim v1\n"})

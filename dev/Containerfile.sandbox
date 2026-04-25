@@ -34,9 +34,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 # Use a locally-built release asset from the mounted workspace.
 ENV PPT_INSTALL_ASSET_URL=file:///workspace/dist/ppt-sandbox-linux.tar.gz
 
-COPY dev/packages.toml /tmp/
-
-# Mimic README install command, then drop into an interactive shell.
-CMD ["bash", "-lc", "curl -fsSL file:///workspace/dist/install.sh | bash -s -- --shell-config yes && cat /tmp/packages.toml >> .config/ppt/packages.toml && .local/ppt/bin/ppt sync && exec bash -li"]
-
+COPY dev/packages.toml /tmp/ppt-sandbox-packages.toml
+COPY --chmod=0755 dev/sandbox-cmd.sh /usr/local/bin/
+CMD ["sandbox-cmd.sh"]
 

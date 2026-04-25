@@ -801,7 +801,14 @@ def cmd_sync(args: argparse.Namespace) -> int:
                     entry.locked = target_version
                     changed_config = True
 
-            message = install_package(paths, platform_info, entry, target_version, state)
+            message = install_package_with_progress_suspended(
+                progress,
+                paths,
+                platform_info,
+                entry,
+                target_version,
+                state,
+            )
             if message:
                 messages.append(message)
             progress.advance(task)
@@ -812,6 +819,23 @@ def cmd_sync(args: argparse.Namespace) -> int:
     for message in messages:
         console().print(message)
     return 0
+
+
+def install_package_with_progress_suspended(
+    progress: Progress,
+    paths: AppPaths,
+    platform_info: PlatformInfo,
+    entry: PackageConfig,
+    target_version: str,
+    state: dict,
+) -> str | None:
+    # Source builds can stream compiler output. Suspend Rich's live renderer so
+    # subprocess output does not interleave with the progress bar.
+    progress.stop()
+    try:
+        return install_package(paths, platform_info, entry, target_version, state)
+    finally:
+        progress.start()
 
 
 def sync_needed_reasons(
@@ -912,7 +936,14 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             if previous != target_version:
                 changed_config = True
                 entry.locked = target_version
-            message = install_package(paths, platform_info, entry, target_version, state)
+            message = install_package_with_progress_suspended(
+                progress,
+                paths,
+                platform_info,
+                entry,
+                target_version,
+                state,
+            )
             if message:
                 messages.append(message)
             progress.advance(task)
