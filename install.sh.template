@@ -97,16 +97,7 @@ asset_name_default="ppt-${PPT_VERSION}-${platform}.tar.gz"
 
 # GitLab:  https://gitlab.com/<group>/<project>
 #   ->     .../-/releases/<tag>/downloads/<asset>
-# GitHub:  https://github.com/<org>/<repo>
-#   ->     .../releases/download/<tag>/<asset>
-case "$PPT_REPO_URL" in
-  *github.com/*)
-    asset_url_default="$PPT_REPO_URL/releases/download/$PPT_VERSION/$asset_name_default"
-    ;;
-  *)
-    asset_url_default="$PPT_REPO_URL/-/releases/$PPT_VERSION/downloads/$asset_name_default"
-    ;;
-esac
+asset_url_default="$PPT_REPO_URL/-/releases/$PPT_VERSION/downloads/$asset_name_default"
 
 asset_url=${PPT_INSTALL_ASSET_URL:-"$asset_url_default"}
 

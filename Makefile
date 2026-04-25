@@ -49,8 +49,6 @@ INSTALL_TEMPLATE := install.sh.template
 REPO_URL ?= $(shell \
 	if [ -n "$$CI_PROJECT_URL" ]; then \
 	  echo "$$CI_PROJECT_URL"; \
-	elif [ -n "$$GITHUB_SERVER_URL" ] && [ -n "$$GITHUB_REPOSITORY" ]; then \
-	  echo "$$GITHUB_SERVER_URL/$$GITHUB_REPOSITORY"; \
 	else \
 	  echo "https://gitlab.com/perapp/ppt"; \
 	fi)
